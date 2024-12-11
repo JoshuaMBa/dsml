@@ -111,20 +111,48 @@ func (gpu *GPUDeviceServer) BeginSend(
 	ctx context.Context,
 	req *pb.BeginSendRequest,
 ) (*pb.BeginSendResponse, error) {
-	panic("not implemented")
+	// get current stream id and increment
+	// kick off goroutine actually sending data using streamsend
+	streamId := gpu.streamId.Load()
+	gpu.streamId.Add(1)
 
+	// Kick off goroutine to send data
+	go func() {
+		// Access the peer and call StreamSend to create a client stream
+		peer := *gpu.peers[req.DstRank.Value]
+
+		// Assuming StreamSendClient is generated from the gRPC stub
+		client, err := peer.StreamSend(ctx) // Establish client stream
+		if err != nil {
+			// Handle error (e.g., log it)
+			return
+		}
+
+		// Prepare and send chunks of data
+		for _, chunk := range prepareChunks(req.Data) { // Split the data <-- this part is actually really important!
+			if err := client.Send(chunk); err != nil {
+				// Handle send error (e.g., log it)
+				return
+			}
+		}
+
+		// Close the client stream after sending all chunks
+		if _, err := client.CloseAndRecv(); err != nil {
+			// Handle error during stream closure
+			return
+		}
+	}()
+
+	return &pb.BeginSendResponse{Initiated: true, StreamId: &pb.StreamId{Value: streamId}}, nil
 }
 
 func (gpu *GPUDeviceServer) BeginReceive(
 	ctx context.Context,
 	req *pb.BeginReceiveRequest,
 ) (*pb.BeginReceiveResponse, error) {
-	// get current stream id and increment
-	// kick off goroutine actually sending data using streamsend
 	panic("not implemented")
 }
 
-// StreamSend implements proto.GPUDeviceServer.
 func (gpu *GPUDeviceServer) StreamSend(grpc.ClientStreamingServer[pb.DataChunk, pb.StreamSendResponse]) error {
 	panic("unimplemented")
 }
