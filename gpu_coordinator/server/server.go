@@ -13,11 +13,11 @@ import (
 )
 
 var (
-	port          = flag.Int("port", 8082, "The server port")
-	gpuDeviceAddr = flag.String(
-		"user-service",
-		"[::1]:8080",
-		"Server address for the GPUDevice",
+	port       = flag.Int("port", 8082, "The server port")
+	deviceList = flag.String(
+		"device-list",
+		"devices.json",
+		"device list for GPUCoordinator to parse",
 	)
 )
 
@@ -30,17 +30,15 @@ func main() {
 	}
 	s := grpc.NewServer(grpc.UnaryInterceptor(logging.MakeMiddleware(logging.MakeLogger())))
 	server, err := sl.MakeGPUCoordinatorServer(sl.GPUCoordinatorOptions{
-		GPUDeviceAddr: *gpuDeviceAddr,
+		GPUDeviceList: *deviceList,
 	})
 
 	if err != nil {
 		log.Fatalf("failed to start server: %q", err)
 	}
-	go server.ContinuallyRefreshCache()
 	pb.RegisterGPUCoordinatorServer(s, server)
 	log.Printf("server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
-	server.Close()
 }
