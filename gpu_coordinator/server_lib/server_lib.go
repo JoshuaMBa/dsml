@@ -28,9 +28,10 @@ type GPUCoordinatorOptions struct {
 }
 
 type Communicator struct {
-	nGpus uint64
-	gpus  []*dpb.GPUDeviceClient
-	using []uint32
+	nGpus  uint64
+	gpus   []*dpb.GPUDeviceClient
+	using  []uint32
+	status cpb.Status
 }
 
 type GPUCoordinatorServer struct {
@@ -126,19 +127,18 @@ func (server *GPUCoordinatorServer) CommInit(
 		gpus = append(gpus, gpu)
 	}
 
-	comm := Communicator{
-		nGpus: uint64(req.NumDevices),
-		gpus:  gpus,
-		using: using,
-	}
-
 	res := &cpb.CommInitResponse{
 		Success: true,
 		CommId:  commId,
 	}
 
 	server.mu.Lock()
-	server.comms[commId] = comm
+	server.comms[commId] = Communicator{
+		nGpus:  uint64(req.NumDevices),
+		gpus:   gpus,
+		using:  using,
+		status: cpb.Status_SUCCESS,
+	}
 	server.mu.Unlock()
 
 	return res, nil
@@ -148,7 +148,11 @@ func (server *GPUCoordinatorServer) GetCommStatus(
 	ctx context.Context,
 	req *cpb.GetCommStatusRequest,
 ) (*cpb.GetCommStatusResponse, error) {
-	panic("unimplemented")
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	return &cpb.GetCommStatusResponse{
+		Status: server.comms[req.CommId].status,
+	}, nil
 }
 
 func (server *GPUCoordinatorServer) GroupStart(
@@ -208,4 +212,3 @@ func ParseJSONFile(filePath string) (*GPUDeviceList, error) {
 	}
 	return &config, nil
 }
-
