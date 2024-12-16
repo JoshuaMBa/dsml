@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strconv"
 
 	// "log"
 	// "sort"
@@ -14,11 +15,11 @@ import (
 	"github.com/JoshuaMBa/dsml/gpu_coordinator/proto"
 	cpb "github.com/JoshuaMBa/dsml/gpu_coordinator/proto"
 	dpb "github.com/JoshuaMBa/dsml/gpu_device/proto"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	// "google.golang.org/grpc"
 	// "google.golang.org/grpc/codes"
-	// "google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	// "google.golang.org/grpc/status"
 )
 
@@ -29,6 +30,7 @@ type GPUCoordinatorOptions struct {
 type Communicator struct {
 	nGpus uint64
 	gpus  []*dpb.GPUDeviceClient
+	using []uint32
 }
 
 type GPUCoordinatorServer struct {
@@ -38,19 +40,41 @@ type GPUCoordinatorServer struct {
 	////////////////////////////////
 	// bonuses
 	////////////////////////////////
-	nGpus    uint32
-	gpuInfos *GPUDeviceList
+	nGpus      uint32
+	gpuInfos   *GPUDeviceList
+	available  []uint32
+	comms      map[uint64]Communicator
+	nextCommId uint64
 }
 
 func MakeGPUCoordinatorServer(options GPUCoordinatorOptions) (*GPUCoordinatorServer, error) {
 	gpuInfos, _ := ParseJSONFile(options.GPUDeviceList)
 	server := &GPUCoordinatorServer{
-		options:  options,
-		nGpus:    uint32(len(gpuInfos.GPUDevices)),
-		gpuInfos: gpuInfos,
+		options:    options,
+		nGpus:      uint32(len(gpuInfos.GPUDevices)),
+		gpuInfos:   gpuInfos,
+		nextCommId: 0,
+	}
+
+	for i := range server.nGpus {
+		server.available = append(server.available, i)
 	}
 
 	return server, nil
+}
+
+func (server *GPUCoordinatorServer) makeConnectionClient(ServiceAddr string) (*dpb.GPUDeviceClient, error) {
+	var opts []grpc.DialOption
+	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+	conn, err := grpc.NewClient(ServiceAddr, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	client := dpb.NewGPUDeviceClient(conn)
+
+	return &client, nil
 }
 
 func (server *GPUCoordinatorServer) CommInit(
@@ -61,15 +85,49 @@ func (server *GPUCoordinatorServer) CommInit(
 	   1. check req.numdevices is valid
 	   2. request metadata + make communicator for each gpudevice service
 	*/
-	if req.NumDevices > server.nGpus {
+	if req.NumDevices > uint32(len(server.available)) {
 		return &cpb.CommInitResponse{Success: false},
 			status.Error(codes.OutOfRange, "num devices in communicator exceeded num gpus available")
 	}
 
-	comm := Communicator{}
+	var using []uint32
+	var gpus []*dpb.GPUDeviceClient
+
+	for _ = range req.NumDevices {
+		l := uint32(len(server.available))
+		g := server.available[l-1]
+		device := server.gpuInfos.GPUDevices[g]
+
+		gpu, err := server.makeConnectionClient(device.IP + ":" + strconv.Itoa(device.Port))
+		if err != nil {
+			server.available = append(server.available, using...)
+			return &cpb.CommInitResponse{
+				Success: false,
+				CommId:  0,
+			}, err
+		}
+
+		gpus = append(gpus, gpu)
+		using = append(using, g)
+		server.available = server.available[:l-1]
+	}
+
+	comm := Communicator{
+		nGpus: uint64(req.NumDevices),
+		gpus:  gpus,
+		using: using,
+	}
+
+	res := &cpb.CommInitResponse{
+		Success: true,
+		CommId:  server.nextCommId,
+	}
+
+	server.comms[server.nextCommId] = comm
+	server.nextCommId++
 	// try to connect to each gpu in gpuinfos
 
-	panic("unimplemented")
+	return res, nil
 }
 
 func (server *GPUCoordinatorServer) GetCommStatus(
