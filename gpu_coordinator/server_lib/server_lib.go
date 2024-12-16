@@ -15,6 +15,8 @@ import (
 	"github.com/JoshuaMBa/dsml/gpu_coordinator/proto"
 	cpb "github.com/JoshuaMBa/dsml/gpu_coordinator/proto"
 	dpb "github.com/JoshuaMBa/dsml/gpu_device/proto"
+	dq "github.com/gammazero/deque"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -27,12 +29,17 @@ type GPUCoordinatorOptions struct {
 	GPUDeviceList string
 }
 
+type Operation struct {
+	Execute func()
+}
+
 type Communicator struct {
 	nGpus   uint64
 	gpus    []*dpb.GPUDeviceClient
 	using   []uint32
 	status  cpb.Status
 	grouped bool
+	group   dq.Deque[Operation]
 }
 
 type GPUCoordinatorServer struct {
@@ -177,12 +184,12 @@ func (server *GPUCoordinatorServer) GroupEnd(
 	req *cpb.GroupEndRequest,
 ) (*cpb.GroupEndResponse, error) {
 	server.mu.Lock()
-	defer server.mu.Unlock()
 	comm := server.comms[req.CommId]
 	comm.grouped = false
 	server.comms[req.CommId] = comm
-	// After this we'll need a mechanism to queue up all requests that occur
-	// between GroupStart() and GroupEnd() and finally carry them all out here
+	server.mu.Unlock()
+
+	// Now we need to iterate through comm.group and execute each operation
 
 	return &cpb.GroupEndResponse{
 		Success: true,
@@ -193,8 +200,16 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 	ctx context.Context,
 	req *cpb.AllReduceRingRequest,
 ) (*cpb.AllReduceRingResponse, error) {
-	// If grouped -> queue current request to be executed later
-	// else execute now
+	server.mu.Lock()
+	defer server.mu.Unlock()
+
+	// Grouped requests are queued to be executed later
+	comm := server.comms[req.CommId]
+	if comm.grouped {
+		comm.group.PushBack(Operation{
+			Execute: func() { server.AllReduceRing(ctx, req) },
+		})
+	}
 	panic("unimplemented")
 }
 
@@ -202,8 +217,6 @@ func (server *GPUCoordinatorServer) Memcpy(
 	ctx context.Context,
 	req *cpb.MemcpyRequest,
 ) (*cpb.MemcpyResponse, error) {
-	// If grouped -> queue current request to be executed later
-	// else execute now
 	panic("unimplemented")
 }
 
