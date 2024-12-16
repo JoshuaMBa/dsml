@@ -15,7 +15,6 @@ import (
 	"github.com/JoshuaMBa/dsml/gpu_coordinator/proto"
 	cpb "github.com/JoshuaMBa/dsml/gpu_coordinator/proto"
 	dpb "github.com/JoshuaMBa/dsml/gpu_device/proto"
-	dq "github.com/gammazero/deque"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -39,7 +38,7 @@ type Communicator struct {
 	using   []uint32
 	status  cpb.Status
 	grouped bool
-	group   dq.Deque[Operation]
+	group   []Operation
 }
 
 type GPUCoordinatorServer struct {
@@ -54,7 +53,7 @@ type GPUCoordinatorServer struct {
 	available  []uint32
 	comms      map[uint64]Communicator
 	nextCommId uint64
-	mu         sync.Mutex
+	mu         sync.Mutex // General mutex
 }
 
 func MakeGPUCoordinatorServer(options GPUCoordinatorOptions) (*GPUCoordinatorServer, error) {
@@ -200,16 +199,20 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 	ctx context.Context,
 	req *cpb.AllReduceRingRequest,
 ) (*cpb.AllReduceRingResponse, error) {
-	server.mu.Lock()
-	defer server.mu.Unlock()
-
 	// Grouped requests are queued to be executed later
+	server.mu.Lock()
 	comm := server.comms[req.CommId]
 	if comm.grouped {
-		comm.group.PushBack(Operation{
+		comm.group = append(comm.group, Operation{
 			Execute: func() { server.AllReduceRing(ctx, req) },
 		})
+		server.comms[req.CommId] = comm
+		server.mu.Unlock()
+		return &cpb.AllReduceRingResponse{
+			Success: true,
+		}, nil
 	}
+	server.mu.Unlock()
 	panic("unimplemented")
 }
 
