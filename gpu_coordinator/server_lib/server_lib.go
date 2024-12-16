@@ -8,7 +8,7 @@ import (
 
 	// "log"
 	// "sort"
-	// "sync"
+	"sync"
 	// "sync/atomic"
 	// "time"
 
@@ -45,6 +45,7 @@ type GPUCoordinatorServer struct {
 	available  []uint32
 	comms      map[uint64]Communicator
 	nextCommId uint64
+	mu         sync.Mutex
 }
 
 func MakeGPUCoordinatorServer(options GPUCoordinatorOptions) (*GPUCoordinatorServer, error) {
@@ -63,7 +64,7 @@ func MakeGPUCoordinatorServer(options GPUCoordinatorOptions) (*GPUCoordinatorSer
 	return server, nil
 }
 
-func (server *GPUCoordinatorServer) makeConnectionClient(ServiceAddr string) (*dpb.GPUDeviceClient, error) {
+func makeConnectionClient(ServiceAddr string) (*dpb.GPUDeviceClient, error) {
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
@@ -85,22 +86,37 @@ func (server *GPUCoordinatorServer) CommInit(
 	   1. check req.numdevices is valid
 	   2. request metadata + make communicator for each gpudevice service
 	*/
-	if req.NumDevices > uint32(len(server.available)) {
+	server.mu.Lock()
+	l := uint32(len(server.available))
+	if req.NumDevices > l {
 		return &cpb.CommInitResponse{Success: false},
 			status.Error(codes.OutOfRange, "num devices in communicator exceeded num gpus available")
 	}
 
-	var using []uint32
+	var devs []GPUDeviceInfo
+
+	// Track GPUs being used by new communicator and available GPUs for new communicators
+	using := server.available[l-req.NumDevices:]
+	server.available = server.available[:l-req.NumDevices]
+	for _, u := range using {
+		devs = append(devs, server.gpuInfos.GPUDevices[u])
+	}
+
+	commId := server.nextCommId
+	server.nextCommId++
+	server.mu.Unlock()
+
 	var gpus []*dpb.GPUDeviceClient
 
-	for _ = range req.NumDevices {
-		l := uint32(len(server.available))
-		g := server.available[l-1]
-		device := server.gpuInfos.GPUDevices[g]
+	// Create device clients for each device in the communicator
+	for i := range req.NumDevices {
+		device := devs[i]
 
-		gpu, err := server.makeConnectionClient(device.IP + ":" + strconv.Itoa(device.Port))
+		gpu, err := makeConnectionClient(device.IP + ":" + strconv.Itoa(device.Port))
 		if err != nil {
+			server.mu.Lock()
 			server.available = append(server.available, using...)
+			server.mu.Unlock()
 			return &cpb.CommInitResponse{
 				Success: false,
 				CommId:  0,
@@ -108,8 +124,6 @@ func (server *GPUCoordinatorServer) CommInit(
 		}
 
 		gpus = append(gpus, gpu)
-		using = append(using, g)
-		server.available = server.available[:l-1]
 	}
 
 	comm := Communicator{
@@ -120,12 +134,12 @@ func (server *GPUCoordinatorServer) CommInit(
 
 	res := &cpb.CommInitResponse{
 		Success: true,
-		CommId:  server.nextCommId,
+		CommId:  commId,
 	}
 
-	server.comms[server.nextCommId] = comm
-	server.nextCommId++
-	// try to connect to each gpu in gpuinfos
+	server.mu.Lock()
+	server.comms[commId] = comm
+	server.mu.Unlock()
 
 	return res, nil
 }
@@ -194,3 +208,4 @@ func ParseJSONFile(filePath string) (*GPUDeviceList, error) {
 	}
 	return &config, nil
 }
+
