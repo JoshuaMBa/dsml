@@ -96,9 +96,10 @@ func (server *GPUCoordinatorServer) CommInit(
 	}
 
 	var devs []GPUDeviceInfo
+	var using []uint32
 
 	// Track GPUs being used by new communicator and available GPUs for new communicators
-	using := server.available[l-req.NumDevices:]
+	using = append(using, server.available[l-req.NumDevices:]...)
 	server.available = server.available[:l-req.NumDevices]
 	for _, u := range using {
 		devs = append(devs, server.gpuInfos.GPUDevices[u])
