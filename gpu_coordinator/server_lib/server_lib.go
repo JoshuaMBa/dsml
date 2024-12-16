@@ -28,10 +28,11 @@ type GPUCoordinatorOptions struct {
 }
 
 type Communicator struct {
-	nGpus  uint64
-	gpus   []*dpb.GPUDeviceClient
-	using  []uint32
-	status cpb.Status
+	nGpus   uint64
+	gpus    []*dpb.GPUDeviceClient
+	using   []uint32
+	status  cpb.Status
+	grouped bool
 }
 
 type GPUCoordinatorServer struct {
@@ -134,10 +135,11 @@ func (server *GPUCoordinatorServer) CommInit(
 
 	server.mu.Lock()
 	server.comms[commId] = Communicator{
-		nGpus:  uint64(req.NumDevices),
-		gpus:   gpus,
-		using:  using,
-		status: cpb.Status_SUCCESS,
+		nGpus:   uint64(req.NumDevices),
+		gpus:    gpus,
+		using:   using,
+		status:  cpb.Status_SUCCESS,
+		grouped: false,
 	}
 	server.mu.Unlock()
 
@@ -159,20 +161,39 @@ func (server *GPUCoordinatorServer) GroupStart(
 	ctx context.Context,
 	req *cpb.GroupStartRequest,
 ) (*cpb.GroupStartResponse, error) {
-	panic("unimplemented")
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	comm := server.comms[req.CommId]
+	comm.grouped = true
+	server.comms[req.CommId] = comm
+	return &cpb.GroupStartResponse{
+		Success: true,
+	}, nil
 }
 
 func (server *GPUCoordinatorServer) GroupEnd(
 	ctx context.Context,
 	req *cpb.GroupEndRequest,
 ) (*cpb.GroupEndResponse, error) {
-	panic("unimplemented")
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	comm := server.comms[req.CommId]
+	comm.grouped = false
+	server.comms[req.CommId] = comm
+	// After this we'll need a mechanism to queue up all requests that occur
+	// between GroupStart() and GroupEnd() and finally carry them all out here
+
+	return &cpb.GroupEndResponse{
+		Success: true,
+	}, nil
 }
 
 func (server *GPUCoordinatorServer) AllReduceRing(
 	ctx context.Context,
 	req *cpb.AllReduceRingRequest,
 ) (*cpb.AllReduceRingResponse, error) {
+	// If grouped -> queue current request to be executed later
+	// else execute now
 	panic("unimplemented")
 }
 
@@ -180,6 +201,8 @@ func (server *GPUCoordinatorServer) Memcpy(
 	ctx context.Context,
 	req *cpb.MemcpyRequest,
 ) (*cpb.MemcpyResponse, error) {
+	// If grouped -> queue current request to be executed later
+	// else execute now
 	panic("unimplemented")
 }
 
