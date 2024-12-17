@@ -40,6 +40,7 @@ func main() {
 		FailureRate:          *failureRate,
 		ResponseOmissionRate: *responseOmissionRate,
 	})
+
 	pb.RegisterGPUDeviceServer(s, server)
 	log.Printf("server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {

@@ -2,6 +2,7 @@ package server_lib
 
 import (
 	"context"
+	"io"
 	"log"
 	"sync/atomic"
 
@@ -10,6 +11,8 @@ import (
 	"github.com/JoshuaMBa/dsml/gpu_device/proto"
 	pb "github.com/JoshuaMBa/dsml/gpu_device/proto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // options for service init
@@ -65,9 +68,12 @@ type GPUDeviceServer struct {
 	////////////////////////////
 	// gpu communications, implementation detail
 	////////////////////////////
-	streamId    atomic.Uint64         // my streamId when sending to others
-	peers       []*pb.GPUDeviceClient // rpc handles for other gpus
-	streamDests []map[uint64]uint64   // where streams i am receiving should go (lookup is peer->streamId->memAddr)
+	streamId atomic.Uint64         // my streamId when sending to others
+	peers    []*pb.GPUDeviceClient // rpc handles for other gpus
+
+	streamSrc     map[uint64]uint64   // where the streams i send come from: (lookup is streamID->{src addr + size})
+	streamDest    []map[uint64]uint64 // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
+	currentStream []uint64            // which stream for each sender (lookup is rank->streamId)
 }
 
 func MakeGPUDeviceServer(
@@ -116,32 +122,7 @@ func (gpu *GPUDeviceServer) BeginSend(
 	streamId := gpu.streamId.Load()
 	gpu.streamId.Add(1)
 
-	// Kick off goroutine to send data
-	go func() {
-		// Access the peer and call StreamSend to create a client stream
-		peer := *gpu.peers[req.DstRank.Value]
-
-		// Assuming StreamSendClient is generated from the gRPC stub
-		client, err := peer.StreamSend(ctx) // Establish client stream
-		if err != nil {
-			// Handle error (e.g., log it)
-			return
-		}
-
-		// Prepare and send chunks of data
-		for _, chunk := range prepareChunks(req.Data) { // Split the data <-- this part is actually really important!
-			if err := client.Send(chunk); err != nil {
-				// Handle send error (e.g., log it)
-				return
-			}
-		}
-
-		// Close the client stream after sending all chunks
-		if _, err := client.CloseAndRecv(); err != nil {
-			// Handle error during stream closure
-			return
-		}
-	}()
+	// sendbufaddr, numbytes, dstrank, add this to something
 
 	return &pb.BeginSendResponse{Initiated: true, StreamId: &pb.StreamId{Value: streamId}}, nil
 }
@@ -153,8 +134,30 @@ func (gpu *GPUDeviceServer) BeginReceive(
 	panic("not implemented")
 }
 
-func (gpu *GPUDeviceServer) StreamSend(grpc.ClientStreamingServer[pb.DataChunk, pb.StreamSendResponse]) error {
-	panic("unimplemented")
+func (gpu *GPUDeviceServer) StreamSend(
+	stream grpc.ServerStream,
+) (*pb.StreamSendResponse, error) {
+	for {
+		// Receive a DataChunk message from the stream
+		req := new(pb.DataChunk)
+		if err := stream.RecvMsg(req); err != nil {
+			// End of stream, send response
+			if err == io.EOF {
+				response := &pb.StreamSendResponse{
+					Success: true,
+				}
+				return response, nil
+			} else {
+				response := &pb.StreamSendResponse{
+					Success: false,
+				}
+				return response, status.Error(codes.Internal, "StreamSend failed")
+			}
+		}
+
+		// write chunk to appropriate dest
+		panic("not implemented")
+	}
 }
 
 func (gpu *GPUDeviceServer) GetStreamStatus(
