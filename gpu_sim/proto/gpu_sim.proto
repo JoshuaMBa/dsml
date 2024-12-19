@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package gpu_sim;
 
+option go_package = "github.com/JoshuaMBa/dsml/gpu_sim/proto";
+
 message DeviceId {
   uint64 value = 1;
 }
