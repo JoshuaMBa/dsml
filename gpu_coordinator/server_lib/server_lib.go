@@ -9,7 +9,6 @@ import (
 	// "log"
 	// "sort"
 	"sync"
-	"fmt"
 	// "sync/atomic"
 	// "time"
 
@@ -37,7 +36,7 @@ type Communicator struct {
 	nGpus   uint64
 	gpus    []*dpb.GPUDeviceClient
 	using   []uint32
-	status  cpb.CommStatus
+	status  cpb.Status
 	grouped bool
 	group   []Operation
 }
@@ -98,7 +97,6 @@ func (server *GPUCoordinatorServer) CommInit(
 	server.mu.Lock()
 	l := uint32(len(server.available))
 	if req.NumDevices > l {
-		server.mu.Unlock()
 		return &cpb.CommInitResponse{Success: false},
 			status.Error(codes.OutOfRange, "num devices in communicator exceeded num gpus available")
 	}
@@ -117,15 +115,13 @@ func (server *GPUCoordinatorServer) CommInit(
 	server.nextCommId++
 	server.mu.Unlock()
 
-	rankToAddress := make(map[uint32]string)
 	var gpus []*dpb.GPUDeviceClient
 
 	// Create device clients for each device in the communicator
-	for rank, device := range devs {
-		address := device.IP + ":" + strconv.Itoa(device.Port)
-		rankToAddress[uint32(rank)] = address
-		gpu, err := makeConnectionClient(address)
+	for i := range req.NumDevices {
+		device := devs[i]
 
+		gpu, err := makeConnectionClient(device.IP + ":" + strconv.Itoa(device.Port))
 		if err != nil {
 			server.mu.Lock()
 			server.available = append(server.available, using...)
@@ -134,11 +130,6 @@ func (server *GPUCoordinatorServer) CommInit(
 				Success: false,
 				CommId:  0,
 			}, err
-		}
-
-		_, err = (*gpu).GetDeviceMetadata(ctx, &dpb.GetDeviceMetadataRequest{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to send metadata to %s: %v", address, err)
 		}
 
 		gpus = append(gpus, gpu)
@@ -154,7 +145,7 @@ func (server *GPUCoordinatorServer) CommInit(
 		nGpus:   uint64(req.NumDevices),
 		gpus:    gpus,
 		using:   using,
-		status:  cpb.CommStatus_SUCCESS,
+		status:  cpb.Status_SUCCESS,
 		grouped: false,
 	}
 	server.mu.Unlock()
@@ -168,14 +159,8 @@ func (server *GPUCoordinatorServer) GetCommStatus(
 ) (*cpb.GetCommStatusResponse, error) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-
-	comm, ok := server.comms[req.CommId]
-	if !ok {
-		return nil, status.Error(codes.NotFound, "communicator not found")
-	}
-
 	return &cpb.GetCommStatusResponse{
-		Status: comm.status,
+		Status: server.comms[req.CommId].status,
 	}, nil
 }
 
