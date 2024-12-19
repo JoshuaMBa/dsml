@@ -13,8 +13,7 @@ import (
 	// "time"
 
 	"github.com/JoshuaMBa/dsml/gpu_coordinator/proto"
-	cpb "github.com/JoshuaMBa/dsml/gpu_coordinator/proto"
-	dpb "github.com/JoshuaMBa/dsml/gpu_device/proto"
+	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -34,9 +33,9 @@ type Operation struct {
 
 type Communicator struct {
 	nGpus   uint64
-	gpus    []*dpb.GPUDeviceClient
+	gpus    []*pb.GPUDeviceClient
 	using   []uint32
-	status  cpb.CommStatus
+	status  pb.CommStatus
 	grouped bool
 	group   []Operation
 }
@@ -72,7 +71,7 @@ func MakeGPUCoordinatorServer(options GPUCoordinatorOptions) (*GPUCoordinatorSer
 	return server, nil
 }
 
-func makeConnectionClient(ServiceAddr string) (*dpb.GPUDeviceClient, error) {
+func makeConnectionClient(ServiceAddr string) (*pb.GPUDeviceClient, error) {
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
@@ -81,15 +80,15 @@ func makeConnectionClient(ServiceAddr string) (*dpb.GPUDeviceClient, error) {
 		return nil, err
 	}
 
-	client := dpb.NewGPUDeviceClient(conn)
+	client := pb.NewGPUDeviceClient(conn)
 
 	return &client, nil
 }
 
 func (server *GPUCoordinatorServer) CommInit(
 	ctx context.Context,
-	req *cpb.CommInitRequest,
-) (*cpb.CommInitResponse, error) {
+	req *pb.CommInitRequest,
+) (*pb.CommInitResponse, error) {
 	/*
 	   1. check req.numdevices is valid
 	   2. request metadata + make communicator for each gpudevice service
@@ -97,7 +96,7 @@ func (server *GPUCoordinatorServer) CommInit(
 	server.mu.Lock()
 	l := uint32(len(server.available))
 	if req.NumDevices > l {
-		return &cpb.CommInitResponse{Success: false},
+		return &pb.CommInitResponse{Success: false},
 			status.Error(codes.OutOfRange, "num devices in communicator exceeded num gpus available")
 	}
 
@@ -115,7 +114,7 @@ func (server *GPUCoordinatorServer) CommInit(
 	server.nextCommId++
 	server.mu.Unlock()
 
-	var gpus []*dpb.GPUDeviceClient
+	var gpus []*pb.GPUDeviceClient
 
 	// Create device clients for each device in the communicator
 	for i := range req.NumDevices {
@@ -126,7 +125,7 @@ func (server *GPUCoordinatorServer) CommInit(
 			server.mu.Lock()
 			server.available = append(server.available, using...)
 			server.mu.Unlock()
-			return &cpb.CommInitResponse{
+			return &pb.CommInitResponse{
 				Success: false,
 				CommId:  0,
 			}, err
@@ -135,7 +134,7 @@ func (server *GPUCoordinatorServer) CommInit(
 		gpus = append(gpus, gpu)
 	}
 
-	res := &cpb.CommInitResponse{
+	res := &pb.CommInitResponse{
 		Success: true,
 		CommId:  commId,
 	}
@@ -145,7 +144,7 @@ func (server *GPUCoordinatorServer) CommInit(
 		nGpus:   uint64(req.NumDevices),
 		gpus:    gpus,
 		using:   using,
-		status:  cpb.CommStatus_SUCCESS,
+		status:  pb.CommStatus_SUCCESS,
 		grouped: false,
 	}
 	server.mu.Unlock()
@@ -155,33 +154,33 @@ func (server *GPUCoordinatorServer) CommInit(
 
 func (server *GPUCoordinatorServer) GetCommStatus(
 	ctx context.Context,
-	req *cpb.GetCommStatusRequest,
-) (*cpb.GetCommStatusResponse, error) {
+	req *pb.GetCommStatusRequest,
+) (*pb.GetCommStatusResponse, error) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	return &cpb.GetCommStatusResponse{
+	return &pb.GetCommStatusResponse{
 		Status: server.comms[req.CommId].status,
 	}, nil
 }
 
 func (server *GPUCoordinatorServer) GroupStart(
 	ctx context.Context,
-	req *cpb.GroupStartRequest,
-) (*cpb.GroupStartResponse, error) {
+	req *pb.GroupStartRequest,
+) (*pb.GroupStartResponse, error) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	comm := server.comms[req.CommId]
 	comm.grouped = true
 	server.comms[req.CommId] = comm
-	return &cpb.GroupStartResponse{
+	return &pb.GroupStartResponse{
 		Success: true,
 	}, nil
 }
 
 func (server *GPUCoordinatorServer) GroupEnd(
 	ctx context.Context,
-	req *cpb.GroupEndRequest,
-) (*cpb.GroupEndResponse, error) {
+	req *pb.GroupEndRequest,
+) (*pb.GroupEndResponse, error) {
 	server.mu.Lock()
 	comm := server.comms[req.CommId]
 	comm.grouped = false
