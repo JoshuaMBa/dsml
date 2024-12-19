@@ -6,8 +6,8 @@ import (
 	"log"
 	"net"
 
-	pb "github.com/JoshuaMBa/dsml/gpu_device/proto"
-	sl "github.com/JoshuaMBa/dsml/gpu_device/server_lib"
+	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
+	sl "github.com/JoshuaMBa/dsml/gpu_sim/gpu_device/server_lib"
 	logging "github.com/JoshuaMBa/dsml/logging"
 	"google.golang.org/grpc"
 )

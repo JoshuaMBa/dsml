@@ -9,8 +9,8 @@ import (
 
 	"github.com/JoshuaMBa/dsml/failure_injection"
 	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
-	"github.com/JoshuaMBa/dsml/gpu_device/proto"
-	pb "github.com/JoshuaMBa/dsml/gpu_device/proto"
+	"github.com/JoshuaMBa/dsml/gpu_sim/proto"
+	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 	// "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

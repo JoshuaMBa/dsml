@@ -6,8 +6,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	dpb "github.com/JoshuaMBa/dsml/gpu_device/proto"
-	server_lib "github.com/JoshuaMBa/dsml/gpu_device/server_lib"
+	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
+	server_lib "github.com/JoshuaMBa/dsml/gpu_sim/gpu_device/server_lib"
 )
 
 func main() {
@@ -22,7 +22,7 @@ func main() {
 	server := server_lib.MockGPUDeviceServer(deviceId, minMemAddr, maxMemAddr, rankToAddress)
 
 	grpcServer := grpc.NewServer()
-	dpb.RegisterGPUDeviceServer(grpcServer, server)
+	pb.RegisterGPUDeviceServer(grpcServer, server)
 
 	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {

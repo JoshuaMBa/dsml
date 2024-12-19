@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	pb "github.com/JoshuaMBa/dsml/gpu_device/proto"
-	sl "github.com/JoshuaMBa/dsml/gpu_device/server_lib"
+	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
+	sl "github.com/JoshuaMBa/dsml/gpu_sim/gpu_device/server_lib"
 )
 
 func TestServerBasic(t *testing.T) {
