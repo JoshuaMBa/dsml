@@ -12,7 +12,6 @@ import (
 	// "sync/atomic"
 	// "time"
 
-	"github.com/JoshuaMBa/dsml/gpu_coordinator/proto"
 	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 
 	"google.golang.org/grpc"
@@ -35,13 +34,13 @@ type Communicator struct {
 	nGpus   uint64
 	gpus    []*pb.GPUDeviceClient
 	using   []uint32
-	status  pb.CommStatus
+	status  pb.Status
 	grouped bool
 	group   []Operation
 }
 
 type GPUCoordinatorServer struct {
-	proto.UnimplementedGPUCoordinatorServer
+	pb.UnimplementedGPUCoordinatorServer
 	options GPUCoordinatorOptions
 
 	////////////////////////////////
@@ -144,7 +143,7 @@ func (server *GPUCoordinatorServer) CommInit(
 		nGpus:   uint64(req.NumDevices),
 		gpus:    gpus,
 		using:   using,
-		status:  pb.CommStatus_SUCCESS,
+		status:  pb.Status_SUCCESS,
 		grouped: false,
 	}
 	server.mu.Unlock()
@@ -189,15 +188,15 @@ func (server *GPUCoordinatorServer) GroupEnd(
 
 	// Now we need to iterate through comm.group and execute each operation
 
-	return &cpb.GroupEndResponse{
+	return &pb.GroupEndResponse{
 		Success: true,
 	}, nil
 }
 
 func (server *GPUCoordinatorServer) AllReduceRing(
 	ctx context.Context,
-	req *cpb.AllReduceRingRequest,
-) (*cpb.AllReduceRingResponse, error) {
+	req *pb.AllReduceRingRequest,
+) (*pb.AllReduceRingResponse, error) {
 	// Grouped requests are queued to be executed later
 	server.mu.Lock()
 	comm := server.comms[req.CommId]
@@ -207,7 +206,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 		})
 		server.comms[req.CommId] = comm
 		server.mu.Unlock()
-		return &cpb.AllReduceRingResponse{
+		return &pb.AllReduceRingResponse{
 			Success: true,
 		}, nil
 	}
@@ -217,8 +216,8 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 
 func (server *GPUCoordinatorServer) Memcpy(
 	ctx context.Context,
-	req *cpb.MemcpyRequest,
-) (*cpb.MemcpyResponse, error) {
+	req *pb.MemcpyRequest,
+) (*pb.MemcpyResponse, error) {
 	panic("unimplemented")
 }
 
