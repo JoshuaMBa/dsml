@@ -36,7 +36,7 @@ type Communicator struct {
 	nGpus   uint64
 	gpus    []*dpb.GPUDeviceClient
 	using   []uint32
-	status  cpb.Status
+	status  cpb.CommStatus
 	grouped bool
 	group   []Operation
 }
@@ -145,7 +145,7 @@ func (server *GPUCoordinatorServer) CommInit(
 		nGpus:   uint64(req.NumDevices),
 		gpus:    gpus,
 		using:   using,
-		status:  cpb.Status_SUCCESS,
+		status:  cpb.CommStatus_SUCCESS,
 		grouped: false,
 	}
 	server.mu.Unlock()
