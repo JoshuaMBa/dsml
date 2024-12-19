@@ -4,8 +4,8 @@ import (
 	"context"
 	"io"
 	"log"
-	"sync/atomic"
 	"sync"
+	"sync/atomic"
 
 	"github.com/JoshuaMBa/dsml/failure_injection"
 	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
@@ -57,8 +57,8 @@ type GPUDeviceServer struct {
 	//    simulate memory     //
 	////////////////////////////
 
-	memory        map[uint64][]byte // gpu's memory space
-    mu            sync.Mutex        // thread safe memory
+	memory map[uint64][]byte // gpu's memory space
+	mu     sync.Mutex        // thread safe memory
 
 	////////////////////////////
 	// device info (i don't anticipate ever using this, maybe it goes into options?)
@@ -81,9 +81,9 @@ type GPUDeviceServer struct {
 	streamId atomic.Uint64         // my streamId when sending to others
 	peers    []*pb.GPUDeviceClient // rpc handles for other gpus
 
-	streamSrc     map[uint64]uint64   // where the streams i send come from: (lookup is streamID->{src addr + size})
-	streamDest    map[uint64]uint64 // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
-	currentStream map[uint32]uint64            // which stream for each sender (lookup is rank->streamId)
+	streamSrc      map[uint64]uint64 // where the streams i send come from: (lookup is streamID->{src addr + size})
+	streamDest     map[uint64]uint64 // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
+	currentStream  map[uint32]uint64 // which stream for each sender (lookup is rank->streamId)
 	streamStatuses sync.Map
 }
 
@@ -173,7 +173,7 @@ func (gpu *GPUDeviceServer) StreamSend(
 	stream pb.GPUDevice_StreamSendServer,
 ) error {
 	var streamId uint64
-	
+
 	for {
 		// Receive a DataChunk message from the stream
 		req, err := stream.Recv()
