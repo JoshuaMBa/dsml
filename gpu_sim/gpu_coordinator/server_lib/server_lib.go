@@ -23,7 +23,10 @@ import (
 )
 
 type GPUCoordinatorOptions struct {
+	// File path to file containing mappings of GPU device ids to GPU IP addresses and ports
 	GPUDeviceList string
+	// Maximum size of batches sent during AllReduceRing
+	MaxBatchSize int64
 }
 
 type Operation struct {
@@ -31,27 +34,31 @@ type Operation struct {
 }
 
 type Communicator struct {
-	nGpus   uint64
-	gpus    []*pb.GPUDeviceClient
-	using   []uint32
-	status  pb.Status
+	// Number of GPUs in communicator
+	nGpus uint64
+	// GPU device clients for GPUs in communicator
+	gpus []*pb.GPUDeviceClient
+	// Array of indices into coordinator array `gpuInfos.GPUDevices`
+	// server.gpuInfos.GPUDevices[using[i]] is the GPUDeviceInfo for the GPU of rank i in current communicator
+	// Note that gpus[i] is the device client corresponding to server.gpuInfos.GPUDevices[using[i]]
+	using []uint32
+	// Status of current communicator
+	status pb.Status
+	// Indicator for if operations are grouped
 	grouped bool
-	group   []Operation
+	// Grouped operations
+	group []Operation
 }
 
 type GPUCoordinatorServer struct {
 	pb.UnimplementedGPUCoordinatorServer
-	options GPUCoordinatorOptions
-
-	////////////////////////////////
-	// bonuses
-	////////////////////////////////
+	options    GPUCoordinatorOptions
 	nGpus      uint32
 	gpuInfos   *GPUDeviceList
 	available  []uint32
 	comms      map[uint64]Communicator
 	nextCommId uint64
-	mu         sync.Mutex // General mutex
+	mu         sync.Mutex
 }
 
 func MakeGPUCoordinatorServer(options GPUCoordinatorOptions) (*GPUCoordinatorServer, error) {
@@ -138,6 +145,7 @@ func (server *GPUCoordinatorServer) CommInit(
 		CommId:  commId,
 	}
 
+	// Store communicator metadata
 	server.mu.Lock()
 	server.comms[commId] = Communicator{
 		nGpus:   uint64(req.NumDevices),
@@ -211,6 +219,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 		}, nil
 	}
 	server.mu.Unlock()
+
 	panic("unimplemented")
 }
 
