@@ -26,7 +26,7 @@ message DeviceMetadata {
   MemAddr maxMemAddr = 3;
 }
 
-enum Status {
+enum StreamStatus {
   IN_PROGRESS = 0;
   SUCCESS = 1;
   FAILED = 2;
@@ -54,6 +54,7 @@ message GetDeviceMetadataRequest {
 
 message GetDeviceMetadataResponse {
   DeviceMetadata metadata = 1;
+  map<uint32, string> rank_to_address = 2; // rank -> "IP:Port"
 }
 
 message BeginSendRequest {
@@ -92,6 +93,6 @@ message GetStreamStatusRequest {
 }
 
 message GetStreamStatusResponse {
-  Status status = 1;
+  StreamStatus status = 1;
 }
 

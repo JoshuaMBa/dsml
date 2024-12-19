@@ -26,7 +26,7 @@ message DeviceMetadata {
   MemAddr maxMemAddr = 3;
 }
 
-enum Status {
+enum CommStatus {
   IN_PROGRESS = 0;
   SUCCESS = 1;
   FAILED = 2;
@@ -68,7 +68,7 @@ message GetCommStatusRequest {
 }
 
 message GetCommStatusResponse {
-  Status status = 1;
+  CommStatus status = 1;
 }
 
 // Group operation messages
