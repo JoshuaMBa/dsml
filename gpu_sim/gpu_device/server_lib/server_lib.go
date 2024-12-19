@@ -135,7 +135,6 @@ func (gpu *GPUDeviceServer) GetDeviceMetadata(
 			MinMemAddr: &pb.MemAddr{Value: gpu.minMemAddr}, // Wrap MinMemAddr
 			MaxMemAddr: &pb.MemAddr{Value: gpu.maxMemAddr}, // Wrap MaxMemAddr
 		},
-		RankToAddress: gpu.rankToAddress,
 	}, nil
 }
 
@@ -148,7 +147,7 @@ func (gpu *GPUDeviceServer) BeginSend(
 	streamId := gpu.streamId.Add(1)
 
 	gpu.streamSrc[streamId] = req.SendBuffAddr.Value
-	gpu.streamStatuses.Store(streamId, pb.StreamStatus_IN_PROGRESS)
+	gpu.streamStatuses.Store(streamId, pb.Status_IN_PROGRESS)
 
 	// sendbufaddr, numbytes, dstrank, add this to something
 
@@ -163,7 +162,7 @@ func (gpu *GPUDeviceServer) BeginReceive(
 	gpu.streamDest[req.StreamId.Value] = req.RecvBuffAddr.Value
 	gpu.mu.Unlock()
 
-	gpu.streamStatuses.Store(req.StreamId.Value, pb.StreamStatus_IN_PROGRESS)
+	gpu.streamStatuses.Store(req.StreamId.Value, pb.Status_IN_PROGRESS)
 
 	return &pb.BeginReceiveResponse{
 		Initiated: true,
@@ -179,7 +178,7 @@ func (gpu *GPUDeviceServer) StreamSend(
 		// Receive a DataChunk message from the stream
 		req, err := stream.Recv()
 		if err == io.EOF {
-			gpu.streamStatuses.Store(streamId, pb.StreamStatus_SUCCESS)
+			gpu.streamStatuses.Store(streamId, pb.Status_SUCCESS)
 
 			// End of stream, send response
 			response := &pb.StreamSendResponse{
@@ -189,7 +188,7 @@ func (gpu *GPUDeviceServer) StreamSend(
 		}
 		if err != nil {
 			// Handle errors during streaming
-			gpu.streamStatuses.Store(streamId, pb.StreamStatus_FAILED)
+			gpu.streamStatuses.Store(streamId, pb.Status_FAILED)
 			return status.Errorf(codes.Internal, "failed to receive stream: %v", err)
 		}
 
@@ -219,7 +218,7 @@ func (gpu *GPUDeviceServer) GetStreamStatus(
 	}
 
 	return &pb.GetStreamStatusResponse{
-		Status: streamStatus.(pb.StreamStatus),
+		Status: streamStatus.(pb.Status),
 	}, nil
 }
 
