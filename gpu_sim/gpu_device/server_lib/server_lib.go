@@ -6,6 +6,7 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"errors"
 
 	"github.com/JoshuaMBa/dsml/failure_injection"
 	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
@@ -70,8 +71,8 @@ type GPUDeviceServer struct {
 	////////////////////////////
 	// gpu communication logical
 	////////////////////////////
-	rank   uint64 // my rank in the communicator
-	nRanks uint64 // total number of gpus in the communicator
+	rank   uint32 // my rank in the communicator
+	nRanks uint32 // total number of gpus in the communicator
 
 	rankToAddress map[uint32]string // map between rank and addresses
 
@@ -123,6 +124,28 @@ func MockGPUDeviceServer(deviceId, minMemAddr, maxMemAddr uint64, rankToAddress 
 		maxMemAddr:    maxMemAddr,
 		rankToAddress: rankToAddress,
 	}
+}
+
+func (gpu *GPUDeviceServer) SetupCommunication(
+	ctx context.Context,
+	req *pb.SetupCommunicationRequest,
+) (*pb.SetupCommunicationResponse, error) {
+	gpu.mu.Lock()
+	defer gpu.mu.Unlock()
+	if req == nil || req.RankToAddress == nil {
+		return nil, errors.New("invalid SetupCommunicationRequest: rankToAddress is nil")
+	}
+	if _, exists := req.RankToAddress[req.Rank.Value]; !exists {
+		return nil, errors.New("current rank not found in rankToAddress")
+	}
+
+	gpu.rank = req.Rank.Value
+	gpu.rankToAddress = req.RankToAddress
+	gpu.nRanks = uint32(len(req.RankToAddress))
+
+	return &pb.SetupCommunicationResponse{
+		Success: true,
+	}, nil
 }
 
 func (gpu *GPUDeviceServer) GetDeviceMetadata(

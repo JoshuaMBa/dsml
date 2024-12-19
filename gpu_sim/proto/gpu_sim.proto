@@ -24,11 +24,16 @@ message DeviceMetadata {
   DeviceId deviceId = 1;
   MemAddr minMemAddr = 2;
   MemAddr maxMemAddr = 3;
+  string ip = 4;          // IP address of the GPUDevice
+  uint32 port = 5;        // Port number of the GPUDevice
+  Rank rank = 6;          // Rank assigned to the device
 }
 
 // A service that simulates a single GPU device
 service GPUDevice {
   rpc GetDeviceMetadata(GetDeviceMetadataRequest) returns (GetDeviceMetadataResponse) {}
+
+  rpc SetupCommunication(SetupCommunicationRequest) returns (SetupCommunicationResponse) {}
 
   // Called by the GPUCoordinator to start the data transfer between two devices.
   // Begin.*() functions are "non-blocking", meaning they return immediately after initiating the operation.
@@ -124,6 +129,15 @@ message CommInitResponse {
   uint64 commId = 2;
   repeated DeviceMetadata devices = 3;
   // Add more metadata here if needed
+}
+
+message SetupCommunicationRequest {
+  map<uint32, string> rankToAddress = 1;       // Map from rank to addresses
+  Rank rank = 2;                       // The rank of the current GPU
+}
+
+message SetupCommunicationResponse {
+  bool success = 1;
 }
 
 message GetCommStatusRequest {

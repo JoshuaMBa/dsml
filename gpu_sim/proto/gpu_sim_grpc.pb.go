@@ -19,11 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	GPUDevice_GetDeviceMetadata_FullMethodName = "/gpu_sim.GPUDevice/GetDeviceMetadata"
-	GPUDevice_BeginSend_FullMethodName         = "/gpu_sim.GPUDevice/BeginSend"
-	GPUDevice_BeginReceive_FullMethodName      = "/gpu_sim.GPUDevice/BeginReceive"
-	GPUDevice_StreamSend_FullMethodName        = "/gpu_sim.GPUDevice/StreamSend"
-	GPUDevice_GetStreamStatus_FullMethodName   = "/gpu_sim.GPUDevice/GetStreamStatus"
+	GPUDevice_GetDeviceMetadata_FullMethodName  = "/gpu_sim.GPUDevice/GetDeviceMetadata"
+	GPUDevice_SetupCommunication_FullMethodName = "/gpu_sim.GPUDevice/SetupCommunication"
+	GPUDevice_BeginSend_FullMethodName          = "/gpu_sim.GPUDevice/BeginSend"
+	GPUDevice_BeginReceive_FullMethodName       = "/gpu_sim.GPUDevice/BeginReceive"
+	GPUDevice_StreamSend_FullMethodName         = "/gpu_sim.GPUDevice/StreamSend"
+	GPUDevice_GetStreamStatus_FullMethodName    = "/gpu_sim.GPUDevice/GetStreamStatus"
 )
 
 // GPUDeviceClient is the client API for GPUDevice service.
@@ -33,6 +34,7 @@ const (
 // A service that simulates a single GPU device
 type GPUDeviceClient interface {
 	GetDeviceMetadata(ctx context.Context, in *GetDeviceMetadataRequest, opts ...grpc.CallOption) (*GetDeviceMetadataResponse, error)
+	SetupCommunication(ctx context.Context, in *SetupCommunicationRequest, opts ...grpc.CallOption) (*SetupCommunicationResponse, error)
 	// Called by the GPUCoordinator to start the data transfer between two devices.
 	// Begin.*() functions are "non-blocking", meaning they return immediately after initiating the operation.
 	// The actual data transfer should happen in the background initiated by the devices.
@@ -56,6 +58,16 @@ func (c *gPUDeviceClient) GetDeviceMetadata(ctx context.Context, in *GetDeviceMe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetDeviceMetadataResponse)
 	err := c.cc.Invoke(ctx, GPUDevice_GetDeviceMetadata_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *gPUDeviceClient) SetupCommunication(ctx context.Context, in *SetupCommunicationRequest, opts ...grpc.CallOption) (*SetupCommunicationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetupCommunicationResponse)
+	err := c.cc.Invoke(ctx, GPUDevice_SetupCommunication_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -112,6 +124,7 @@ func (c *gPUDeviceClient) GetStreamStatus(ctx context.Context, in *GetStreamStat
 // A service that simulates a single GPU device
 type GPUDeviceServer interface {
 	GetDeviceMetadata(context.Context, *GetDeviceMetadataRequest) (*GetDeviceMetadataResponse, error)
+	SetupCommunication(context.Context, *SetupCommunicationRequest) (*SetupCommunicationResponse, error)
 	// Called by the GPUCoordinator to start the data transfer between two devices.
 	// Begin.*() functions are "non-blocking", meaning they return immediately after initiating the operation.
 	// The actual data transfer should happen in the background initiated by the devices.
@@ -133,6 +146,9 @@ type UnimplementedGPUDeviceServer struct{}
 
 func (UnimplementedGPUDeviceServer) GetDeviceMetadata(context.Context, *GetDeviceMetadataRequest) (*GetDeviceMetadataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetDeviceMetadata not implemented")
+}
+func (UnimplementedGPUDeviceServer) SetupCommunication(context.Context, *SetupCommunicationRequest) (*SetupCommunicationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetupCommunication not implemented")
 }
 func (UnimplementedGPUDeviceServer) BeginSend(context.Context, *BeginSendRequest) (*BeginSendResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BeginSend not implemented")
@@ -181,6 +197,24 @@ func _GPUDevice_GetDeviceMetadata_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(GPUDeviceServer).GetDeviceMetadata(ctx, req.(*GetDeviceMetadataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GPUDevice_SetupCommunication_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetupCommunicationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GPUDeviceServer).SetupCommunication(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GPUDevice_SetupCommunication_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GPUDeviceServer).SetupCommunication(ctx, req.(*SetupCommunicationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -256,6 +290,10 @@ var GPUDevice_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetDeviceMetadata",
 			Handler:    _GPUDevice_GetDeviceMetadata_Handler,
+		},
+		{
+			MethodName: "SetupCommunication",
+			Handler:    _GPUDevice_SetupCommunication_Handler,
 		},
 		{
 			MethodName: "BeginSend",
