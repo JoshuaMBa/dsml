@@ -41,6 +41,9 @@ func main() {
 		ResponseOmissionRate: *responseOmissionRate,
 	})
 
+	if err != nil {
+		log.Fatalf("failed to start server: %q", err)
+	}
 	pb.RegisterGPUDeviceServer(s, server)
 	log.Printf("server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {

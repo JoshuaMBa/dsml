@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	port       = flag.Int("port", 8082, "The server port")
+	port       = flag.Int("port", 6000, "The server port")
 	deviceList = flag.String(
 		"device-list",
 		"devices.json",
