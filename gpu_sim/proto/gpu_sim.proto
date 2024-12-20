@@ -104,6 +104,7 @@ message GetStreamStatusResponse {
 service GPUCoordinator {
   rpc CommInit(CommInitRequest) returns (CommInitResponse) {}
   rpc GetCommStatus(GetCommStatusRequest) returns (GetCommStatusResponse) {}
+  rpc CommDestroy(CommDestroyRequest) returns (CommDestroyResponse) {}
   // You may choose to implement CommFinalize and CommDestroy RPCs
 
   // Group operations wrapper
@@ -146,6 +147,14 @@ message GetCommStatusRequest {
 
 message GetCommStatusResponse {
   Status status = 1;
+}
+
+message CommDestroyRequest {
+  uint64 commId = 1; // ID of the communicator to destroy
+}
+
+message CommDestroyResponse {
+  bool success = 1;  // Indicates whether the communicator was successfully destroyed
 }
 
 // Group operation messages

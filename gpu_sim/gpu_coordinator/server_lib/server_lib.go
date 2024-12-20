@@ -86,10 +86,7 @@ func makeConnectionClient(ServiceAddr string) (*pb.GPUDeviceClient, error) {
 	return &client, nil
 }
 
-func (server *GPUCoordinatorServer) CommDestroy(commId uint64) {
-	server.mu.Lock()
-	defer server.mu.Unlock()
-
+func (server *GPUCoordinatorServer) commDestroyInternal(commId uint64) { // Not thread-safe on its own
 	if comm, exists := server.comms[commId]; exists {
 		for _, conn := range comm.connections {
 			conn.Close()
@@ -98,6 +95,22 @@ func (server *GPUCoordinatorServer) CommDestroy(commId uint64) {
 	
 	server.available = append(server.available, server.comms[commId].using...)
 	delete(server.comms, commId)
+}
+
+func (server *GPUCoordinatorServer) CommDestroy(
+	ctx context.Context,
+	req *pb.CommDestroyRequest,
+) (*pb.CommDestroyResponse, error) {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+
+	_, exists := server.comms[req.CommId]
+	if !exists {
+		return &pb.CommDestroyResponse{Success: false}, status.Error(codes.NotFound, "communicator not found")
+	}
+
+	server.commDestroyInternal(req.CommId)
+	return &pb.CommDestroyResponse{Success: true}, nil
 }
 
 
@@ -145,8 +158,8 @@ func (server *GPUCoordinatorServer) CommInit(
 				using:   using,
 				status:  pb.Status_FAILED,
 			}
+			server.commDestroyInternal(commId)
 			server.mu.Unlock()
-			server.CommDestroy(commId)
 			return &pb.CommInitResponse{
 				Success: false,
 				CommId:  0,
@@ -168,8 +181,8 @@ func (server *GPUCoordinatorServer) CommInit(
 				using:   using,
 				status:  pb.Status_FAILED,
 			}
+			server.commDestroyInternal(commId)
 			server.mu.Unlock()
-			server.CommDestroy(commId)
 			return &pb.CommInitResponse{
 				Success: false,
 				CommId:  0,

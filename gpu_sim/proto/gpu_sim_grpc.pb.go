@@ -321,6 +321,7 @@ var GPUDevice_ServiceDesc = grpc.ServiceDesc{
 const (
 	GPUCoordinator_CommInit_FullMethodName      = "/gpu_sim.GPUCoordinator/CommInit"
 	GPUCoordinator_GetCommStatus_FullMethodName = "/gpu_sim.GPUCoordinator/GetCommStatus"
+	GPUCoordinator_CommDestroy_FullMethodName   = "/gpu_sim.GPUCoordinator/CommDestroy"
 	GPUCoordinator_GroupStart_FullMethodName    = "/gpu_sim.GPUCoordinator/GroupStart"
 	GPUCoordinator_GroupEnd_FullMethodName      = "/gpu_sim.GPUCoordinator/GroupEnd"
 	GPUCoordinator_AllReduceRing_FullMethodName = "/gpu_sim.GPUCoordinator/AllReduceRing"
@@ -335,6 +336,7 @@ const (
 type GPUCoordinatorClient interface {
 	CommInit(ctx context.Context, in *CommInitRequest, opts ...grpc.CallOption) (*CommInitResponse, error)
 	GetCommStatus(ctx context.Context, in *GetCommStatusRequest, opts ...grpc.CallOption) (*GetCommStatusResponse, error)
+	CommDestroy(ctx context.Context, in *CommDestroyRequest, opts ...grpc.CallOption) (*CommDestroyResponse, error)
 	// Group operations wrapper
 	GroupStart(ctx context.Context, in *GroupStartRequest, opts ...grpc.CallOption) (*GroupStartResponse, error)
 	GroupEnd(ctx context.Context, in *GroupEndRequest, opts ...grpc.CallOption) (*GroupEndResponse, error)
@@ -367,6 +369,16 @@ func (c *gPUCoordinatorClient) GetCommStatus(ctx context.Context, in *GetCommSta
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetCommStatusResponse)
 	err := c.cc.Invoke(ctx, GPUCoordinator_GetCommStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *gPUCoordinatorClient) CommDestroy(ctx context.Context, in *CommDestroyRequest, opts ...grpc.CallOption) (*CommDestroyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CommDestroyResponse)
+	err := c.cc.Invoke(ctx, GPUCoordinator_CommDestroy_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -421,6 +433,7 @@ func (c *gPUCoordinatorClient) Memcpy(ctx context.Context, in *MemcpyRequest, op
 type GPUCoordinatorServer interface {
 	CommInit(context.Context, *CommInitRequest) (*CommInitResponse, error)
 	GetCommStatus(context.Context, *GetCommStatusRequest) (*GetCommStatusResponse, error)
+	CommDestroy(context.Context, *CommDestroyRequest) (*CommDestroyResponse, error)
 	// Group operations wrapper
 	GroupStart(context.Context, *GroupStartRequest) (*GroupStartResponse, error)
 	GroupEnd(context.Context, *GroupEndRequest) (*GroupEndResponse, error)
@@ -444,6 +457,9 @@ func (UnimplementedGPUCoordinatorServer) CommInit(context.Context, *CommInitRequ
 }
 func (UnimplementedGPUCoordinatorServer) GetCommStatus(context.Context, *GetCommStatusRequest) (*GetCommStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetCommStatus not implemented")
+}
+func (UnimplementedGPUCoordinatorServer) CommDestroy(context.Context, *CommDestroyRequest) (*CommDestroyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CommDestroy not implemented")
 }
 func (UnimplementedGPUCoordinatorServer) GroupStart(context.Context, *GroupStartRequest) (*GroupStartResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GroupStart not implemented")
@@ -510,6 +526,24 @@ func _GPUCoordinator_GetCommStatus_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(GPUCoordinatorServer).GetCommStatus(ctx, req.(*GetCommStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GPUCoordinator_CommDestroy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CommDestroyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GPUCoordinatorServer).CommDestroy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GPUCoordinator_CommDestroy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GPUCoordinatorServer).CommDestroy(ctx, req.(*CommDestroyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -600,6 +634,10 @@ var GPUCoordinator_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetCommStatus",
 			Handler:    _GPUCoordinator_GetCommStatus_Handler,
+		},
+		{
+			MethodName: "CommDestroy",
+			Handler:    _GPUCoordinator_CommDestroy_Handler,
 		},
 		{
 			MethodName: "GroupStart",

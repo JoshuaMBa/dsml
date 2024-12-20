@@ -16,7 +16,7 @@ var (
 	port       = flag.Int("port", 6000, "The server port")
 	deviceList = flag.String(
 		"device-list",
-		"devices.json",
+		"gpu_sim/run/device_lists/three_devices.json",
 		"device list for GPUCoordinator to parse",
 	)
 )

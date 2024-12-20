@@ -49,4 +49,17 @@ func main() {
 	}
 
 	fmt.Printf("Communicator %d status: %v\n", commId, statusResponse.Status)
+
+	destroyResponse, err := coordinatorClient.CommDestroy(ctx, &pb.CommDestroyRequest{
+		CommId: commId,
+	})
+	if err != nil {
+		log.Fatalf("CommDestroy failed: %v", err)
+	}
+
+	if destroyResponse.Success {
+		fmt.Printf("Communicator %d destroyed successfully.\n", commId)
+	} else {
+		fmt.Printf("Failed to destroy communicator %d.\n", commId)
+	}
 }
