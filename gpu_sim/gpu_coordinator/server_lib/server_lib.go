@@ -32,7 +32,6 @@ type Operation struct {
 
 type Communicator struct {
 	nGpus       uint64
-	gpus        []*pb.GPUDeviceClient
 	connections []*grpc.ClientConn
 	using       []uint32
 	status      pb.Status
@@ -72,7 +71,7 @@ func MakeGPUCoordinatorServer(options GPUCoordinatorOptions) (*GPUCoordinatorSer
 	return server, nil
 }
 
-func makeConnectionClient(ServiceAddr string) (*pb.GPUDeviceClient, error) {
+func makeConnectionClient(ServiceAddr string) (*grpc.ClientConn, error) {
 	var opts []grpc.DialOption
 	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
@@ -81,9 +80,7 @@ func makeConnectionClient(ServiceAddr string) (*pb.GPUDeviceClient, error) {
 		return nil, err
 	}
 
-	client := pb.NewGPUDeviceClient(conn)
-
-	return &client, nil
+	return conn, nil
 }
 
 func (server *GPUCoordinatorServer) commDestroyInternal(commId uint64) { // Not thread-safe on its own
@@ -92,7 +89,7 @@ func (server *GPUCoordinatorServer) commDestroyInternal(commId uint64) { // Not 
 			conn.Close()
 		}
 	}
-	
+
 	server.available = append(server.available, server.comms[commId].using...)
 	delete(server.comms, commId)
 }
@@ -112,7 +109,6 @@ func (server *GPUCoordinatorServer) CommDestroy(
 	server.commDestroyInternal(req.CommId)
 	return &pb.CommDestroyResponse{Success: true}, nil
 }
-
 
 func (server *GPUCoordinatorServer) CommInit(
 	ctx context.Context,
@@ -143,7 +139,7 @@ func (server *GPUCoordinatorServer) CommInit(
 	server.nextCommId++
 	server.mu.Unlock()
 
-	var gpus []*pb.GPUDeviceClient
+	var connections []*grpc.ClientConn
 	rankToAddress := make(map[uint32]string)
 
 	// Create device clients for each device in the communicator
@@ -151,12 +147,12 @@ func (server *GPUCoordinatorServer) CommInit(
 		address := device.IP + ":" + strconv.Itoa(device.Port)
 		rankToAddress[uint32(i)] = address
 
-		gpu, err := makeConnectionClient(address)
+		conn, err := makeConnectionClient(address)
 		if err != nil {
 			server.mu.Lock()
 			server.comms[commId] = Communicator{
-				using:   using,
-				status:  pb.Status_FAILED,
+				using:  using,
+				status: pb.Status_FAILED,
 			}
 			server.commDestroyInternal(commId)
 			server.mu.Unlock()
@@ -166,20 +162,21 @@ func (server *GPUCoordinatorServer) CommInit(
 			}, err
 		}
 
-		gpus = append(gpus, gpu)
+		connections = append(connections, conn)
 	}
 
-	for i, gpu := range gpus {
+	for i, conn := range connections {
+		gpu := pb.NewGPUDeviceClient(conn)
 		rank := uint32(i)
-		_, err := (*gpu).SetupCommunication(ctx, &pb.SetupCommunicationRequest{
+		_, err := gpu.SetupCommunication(ctx, &pb.SetupCommunicationRequest{
 			RankToAddress: rankToAddress,
-			Rank:       &pb.Rank{Value: rank},
+			Rank:          &pb.Rank{Value: rank},
 		})
 		if err != nil {
 			server.mu.Lock()
 			server.comms[commId] = Communicator{
-				using:   using,
-				status:  pb.Status_FAILED,
+				using:  using,
+				status: pb.Status_FAILED,
 			}
 			server.commDestroyInternal(commId)
 			server.mu.Unlock()
@@ -192,11 +189,11 @@ func (server *GPUCoordinatorServer) CommInit(
 
 	server.mu.Lock()
 	server.comms[commId] = Communicator{
-		nGpus:   uint64(req.NumDevices),
-		gpus:    gpus,
-		using:   using,
-		status:  pb.Status_SUCCESS,
-		grouped: false,
+		nGpus:       uint64(req.NumDevices),
+		connections: connections,
+		using:       using,
+		status:      pb.Status_SUCCESS,
+		grouped:     false,
 	}
 	server.mu.Unlock()
 
