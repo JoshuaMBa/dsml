@@ -71,6 +71,7 @@ message BeginReceiveRequest {
   MemAddr recvBuffAddr = 2;
   uint64 numBytes = 3;
   Rank srcRank = 4;
+  ReduceOp op = 5;
 }
 
 message BeginReceiveResponse {
