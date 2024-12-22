@@ -3,14 +3,13 @@ package server_lib
 import (
 	"context"
 	"fmt"
+	"github.com/JoshuaMBa/dsml/failure_injection"
+	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
+	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 	"io"
 	"log"
 	"sync"
 	"sync/atomic"
-
-	"github.com/JoshuaMBa/dsml/failure_injection"
-	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
-	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 
 	// "google.golang.org/grpc"
 	"google.golang.org/grpc"
