@@ -2,16 +2,17 @@ package server_lib
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"sync"
 	"sync/atomic"
-	"errors"
 
 	"github.com/JoshuaMBa/dsml/failure_injection"
 	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
 	"github.com/JoshuaMBa/dsml/gpu_sim/proto"
 	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
+
 	// "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -82,10 +83,16 @@ type GPUDeviceServer struct {
 	streamId atomic.Uint64         // my streamId when sending to others
 	peers    []*pb.GPUDeviceClient // rpc handles for other gpus
 
-	streamSrc      map[uint64]uint64 // where the streams i send come from: (lookup is streamID->{src addr + size})
-	streamDest     map[uint64]uint64 // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
-	currentStream  map[uint32]uint64 // which stream for each sender (lookup is rank->streamId)
+	streamSrc      map[uint64]StreamSrcInfo // where the streams i send come from: (lookup is streamID->{src addr + size})
+	streamDest     map[uint64]uint64        // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
+	currentStream  map[uint32]uint64        // which stream for each sender (lookup is rank->streamId)
 	streamStatuses sync.Map
+}
+
+type StreamSrcInfo struct {
+	SendBuffAddr uint64
+	NumBytes     uint64
+	DstRank      uint32
 }
 
 func MakeGPUDeviceServer(
@@ -110,7 +117,7 @@ func MakeGPUDeviceServer(
 		minMemAddr:     0,
 		maxMemAddr:     options.MemoryNeeded,
 		memory:         make(map[uint64][]byte),
-		streamSrc:      make(map[uint64]uint64),
+		streamSrc:      make(map[uint64]StreamSrcInfo),
 		streamDest:     make(map[uint64]uint64),
 		currentStream:  make(map[uint32]uint64),
 		streamStatuses: sync.Map{},
@@ -167,12 +174,14 @@ func (gpu *GPUDeviceServer) BeginSend(
 ) (*pb.BeginSendResponse, error) {
 	// get current stream id and increment
 	// kick off goroutine actually sending data using streamsend
-	streamId := gpu.streamId.Add(1)
+	streamId := gpu.streamId.Load()
 
-	gpu.streamSrc[streamId] = req.SendBuffAddr.Value
-	gpu.streamStatuses.Store(streamId, pb.Status_IN_PROGRESS)
+	gpu.streamSrc[streamId-1] = StreamSrcInfo{req.SendBuffAddr.Value, req.NumBytes, req.DstRank.Value}
+	gpu.streamStatuses.Store(streamId, pb.Status_READY)
 
-	// sendbufaddr, numbytes, dstrank, add this to something
+	gpu.streamId.Add(1)
+
+	// add error checking
 
 	return &pb.BeginSendResponse{Initiated: true, StreamId: &pb.StreamId{Value: streamId}}, nil
 }
@@ -258,4 +267,18 @@ func (gpu *GPUDeviceServer) SetInjectionConfig(
 	)
 
 	return &fipb.SetInjectionConfigResponse{}, nil
+}
+
+func (gpu *GPUDeviceServer) StreamSendThread() {
+	for {
+		// calls streamsend on things in streamstatus which are not ready!
+		// for now will just acquire lock
+		gpu.streamStatuses.Range(func(streamId, status interface{}) bool {
+			if status == pb.Status_READY {
+				return false
+			} else {
+				return true // true to continue
+			}
+		})
+	}
 }

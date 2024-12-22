@@ -6,8 +6,8 @@ import (
 	"log"
 	"net"
 
-	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 	sl "github.com/JoshuaMBa/dsml/gpu_sim/gpu_device/server_lib"
+	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 	logging "github.com/JoshuaMBa/dsml/logging"
 	"google.golang.org/grpc"
 )
@@ -40,6 +40,8 @@ func main() {
 		FailureRate:          *failureRate,
 		ResponseOmissionRate: *responseOmissionRate,
 	})
+
+	go server.StreamSendThread()
 
 	if err != nil {
 		log.Fatalf("failed to start server: %q", err)
