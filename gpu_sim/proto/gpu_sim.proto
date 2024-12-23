@@ -81,6 +81,8 @@ message BeginReceiveResponse {
 message DataChunk {
   bytes data = 1;
   // You may add more fields here
+  StreamId streamId = 2;
+  Rank srcRank = 3;
 }
 
 message StreamSendResponse {
@@ -92,7 +94,6 @@ message GetStreamStatusRequest {
 }
 
 enum Status {
-  READY = 0;
   IN_PROGRESS = 1;
   SUCCESS = 2;
   FAILED = 3;

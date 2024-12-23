@@ -53,8 +53,8 @@ func TestSendRecvBasic(t *testing.T) {
 	// check that gpus were setup like we expect
 	for i, md := range gpuMetadatas {
 		j := i + 1
-		assert.Equal(t, uint64(10+j), md.DeviceId, "Unexpected DeviceId for GPU %d", j)
-		assert.Equal(t, uint64(0x1000), md.MaxMemAddr-md.MinMemAddr, "Unexpected memory range for GPU %d", j)
+		assert.Equal(t, uint64(10+j), md.DeviceId, "Unexpected DeviceId for GPU %d", i)
+		assert.Equal(t, uint64(0x1000), md.MaxMemAddr-md.MinMemAddr, "Unexpected memory range for GPU %d", i)
 	}
 	t.Log("GPU devices initialized correctly")
 
@@ -79,13 +79,23 @@ func TestSendRecvBasic(t *testing.T) {
 	}
 
 	// perform send and receive
-	resp, err := gpus[0].BeginSend(context.Background(),
+	sendResp, err := gpus[1].BeginSend(context.Background(),
 		&pb.BeginSendRequest{
-			SendBuffAddr: &pb.MemAddr{Value: gpuMetadatas[0].MinMemAddr},
+			SendBuffAddr: &pb.MemAddr{Value: gpuMetadatas[1].MinMemAddr},
 			NumBytes:     0x100,
-			DstRank:      &pb.Rank{Value: 1},
+			DstRank:      &pb.Rank{Value: 0},
+		})
+	assert.Equal(t, nil, err)
+	t.Logf("streamid: %d", sendResp.StreamId.Value)
+
+	// why are these fields optional, is there a way to make them not?
+	_, err = gpus[0].BeginReceive(context.Background(),
+		&pb.BeginReceiveRequest{
+			RecvBuffAddr: &pb.MemAddr{Value: gpuMetadatas[0].MinMemAddr},
+			NumBytes:     0x100,
+			StreamId:     sendResp.StreamId,
+			SrcRank:      &pb.Rank{Value: 1},
 		})
 	assert.Equal(t, nil, err)
 
-	t.Logf("streamid: %d", resp.StreamId.Value)
 }

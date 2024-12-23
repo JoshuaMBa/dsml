@@ -74,7 +74,7 @@ func StartServer(config *GPUDeviceServerConfig) (*grpc.Server, net.Listener, err
 		return nil, nil, fmt.Errorf("failed to start server: %w", err)
 	}
 
-	go server.StreamSendThread()
+	go server.StreamSendDispatch()
 
 	pb.RegisterGPUDeviceServer(s, server)
 	log.Printf("server listening at %v", lis.Addr())

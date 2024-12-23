@@ -14,7 +14,7 @@ import (
 func TestServerBasic(t *testing.T) {
 
 	gpu, _ := sl.MakeGPUDeviceServer(*sl.DefaultGPUDeviceOptions())
-	go gpu.StreamSendThread()
+	go gpu.StreamSendDispatch()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

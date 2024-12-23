@@ -7,7 +7,6 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
-	"unsafe"
 
 	"github.com/JoshuaMBa/dsml/failure_injection"
 	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
@@ -56,8 +55,8 @@ type GPUDeviceServer struct {
 	//    simulate memory     //
 	////////////////////////////
 
-	memory []byte
-	mu     sync.Mutex // thread safe memory
+	memory MemorySpace
+	mu     sync.Mutex // thread safe memory, might be unneeded?
 
 	////////////////////////////
 	// device info (i don't anticipate ever using this, maybe it goes into options?)
@@ -84,17 +83,22 @@ type GPUDeviceServer struct {
 
 	streamSrc chan StreamSrcInfo
 
-	streamDest     map[uint32]map[uint64]uint64 // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
-	currentStream  map[uint32]uint64            // which stream for each sender (lookup is rank->streamId)
+	streamDst      []StreamDstMonitor // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
 	streamStatuses sync.Map
 
 	streamSendSignal chan int
 }
 
 type StreamSrcInfo struct {
+	StreamId     uint64
 	SendBuffAddr uint64
 	NumBytes     uint64
 	DstRank      uint32
+}
+
+type StreamDstMonitor struct {
+	cond sync.Cond
+	info map[uint64]uint64 // maps streamid->dstaddr (for a given rank only)
 }
 
 func MakeGPUDeviceServer(
@@ -114,20 +118,18 @@ func MakeGPUDeviceServer(
 	)
 
 	// preallocate memory, if it's big it should use mmap
-	mem := make([]byte, options.MemoryNeeded)
-	startAddr := uint64(uintptr(unsafe.Pointer(&mem[0])))
-	endAddr := startAddr + options.MemoryNeeded
+	mem, _ := NewDeviceMemory(fmt.Sprintf("device_%d_memory", options.DeviceId))
+	mem.Allocate(options.MemoryNeeded)
 
 	return &GPUDeviceServer{
-		options:          options,
-		fi:               fi,
-		deviceId:         options.DeviceId,
-		minMemAddr:       startAddr,
-		maxMemAddr:       endAddr,
-		memory:           mem,
-		streamSrc:        make(chan StreamSrcInfo, 16),
-		streamDest:       make(map[uint32]map[uint64]uint64),
-		currentStream:    make(map[uint32]uint64),
+		options:    options,
+		fi:         fi,
+		deviceId:   options.DeviceId,
+		memory:     mem,
+		minMemAddr: mem.MinAddr(),
+		maxMemAddr: mem.MaxAddr(),
+		streamSrc:  make(chan StreamSrcInfo, 16),
+		// we don't do streamdst until we have all the ranks?
 		streamStatuses:   sync.Map{},
 		streamSendSignal: make(chan int),
 	}, nil
@@ -152,8 +154,7 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 	if req == nil || req.RankToAddress == nil {
 		return nil, status.Error(codes.InvalidArgument, "missing RankToAddress mappings")
 	}
-	log.Printf("rank2address is : %v", req.RankToAddress)
-	log.Printf("my rank is : %v", req.Rank.Value)
+
 	if _, exists := req.RankToAddress[req.Rank.Value]; !exists {
 		return nil, status.Error(codes.InvalidArgument, "did not specify rank for device")
 	}
@@ -176,6 +177,15 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 		// handle this error!
 		gpu.conns[rank], _ = grpc.NewClient(gpu.rank2Address[rank], opts...)
 		gpu.peers[rank] = pb.NewGPUDeviceClient(gpu.conns[rank])
+	}
+
+	// setup streamdst info
+	gpu.streamDst = make([]StreamDstMonitor, gpu.nRanks)
+	for i := range gpu.streamDst {
+		gpu.streamDst[i] = StreamDstMonitor{
+			cond: *sync.NewCond(&sync.Mutex{}),
+			info: make(map[uint64]uint64),
+		}
 	}
 
 	return &pb.SetupCommunicationResponse{
@@ -215,8 +225,14 @@ func (gpu *GPUDeviceServer) BeginSend(
 
 	streamId := gpu.streamId.Load()
 
-	gpu.streamSrc <- StreamSrcInfo{req.SendBuffAddr.Value, req.NumBytes, req.DstRank.Value}
-	gpu.streamStatuses.Store(streamId, pb.Status_READY)
+	// protobuf default value issue
+	var dstRank uint32 = 0
+	if req.DstRank != nil {
+		dstRank = req.DstRank.Value
+	}
+
+	gpu.streamSrc <- StreamSrcInfo{streamId, req.SendBuffAddr.Value, req.NumBytes, dstRank}
+	gpu.streamStatuses.Store(streamId, pb.Status_IN_PROGRESS)
 
 	gpu.streamId.Add(1)
 
@@ -227,11 +243,37 @@ func (gpu *GPUDeviceServer) BeginReceive(
 	ctx context.Context,
 	req *pb.BeginReceiveRequest,
 ) (*pb.BeginReceiveResponse, error) {
-	gpu.mu.Lock()
-	gpu.streamDest[req.SrcRank.Value][req.StreamId.Value] = req.RecvBuffAddr.Value
-	gpu.mu.Unlock()
 
-	gpu.streamStatuses.Store(req.StreamId.Value, pb.Status_IN_PROGRESS)
+	start := req.RecvBuffAddr.Value
+	end := start + req.NumBytes
+	if start < gpu.minMemAddr || end >= gpu.maxMemAddr {
+		return &pb.BeginReceiveResponse{Initiated: false},
+			status.Errorf(codes.InvalidArgument,
+				"invalid argument: dst address range [0x%x, 0x%x) not in GPU memory range [0x%x, 0x%x)",
+				start, end, gpu.minMemAddr, gpu.maxMemAddr)
+	}
+
+	// protobuf default value issue
+	var srcRank uint32 = 0
+	if req.SrcRank != nil {
+		srcRank = req.SrcRank.Value
+	}
+
+	var streamId uint64 = 0
+	if req.StreamId != nil {
+		streamId = req.StreamId.Value
+	}
+
+	// acquire lock on monitor
+	gpu.streamDst[srcRank].cond.L.Lock()
+	defer gpu.streamDst[srcRank].cond.L.Unlock()
+
+	// assign destination info
+	log.Printf("info is: %v", gpu.streamDst[srcRank].info)
+	gpu.streamDst[srcRank].info[streamId] = req.RecvBuffAddr.Value
+
+	// wake up waiting threads
+	gpu.streamDst[srcRank].cond.Broadcast()
 
 	return &pb.BeginReceiveResponse{
 		Initiated: true,
@@ -241,12 +283,23 @@ func (gpu *GPUDeviceServer) BeginReceive(
 func (gpu *GPUDeviceServer) StreamSend(
 	stream pb.GPUDevice_StreamSendServer,
 ) error {
-	var rank uint32
-	var streamId uint64
+	var srcRank uint32 = 0
+	var streamId uint64 = 0
 
 	for {
 		// Receive a DataChunk message from the stream
 		req, err := stream.Recv()
+		log.Printf("req is %v", req)
+		// protobuf default value / stream handling, it's weird
+		if req != nil {
+			if req.SrcRank != nil {
+				srcRank = req.SrcRank.Value
+			}
+			if req.StreamId != nil {
+				streamId = req.StreamId.Value
+			}
+		}
+
 		if err == io.EOF {
 			gpu.streamStatuses.Store(streamId, pb.Status_SUCCESS)
 
@@ -262,11 +315,17 @@ func (gpu *GPUDeviceServer) StreamSend(
 			return status.Errorf(codes.Internal, "failed to receive stream: %v", err)
 		}
 
-		// Simulate writing the data to memory
-		gpu.mu.Lock()
-		offset := gpu.streamDest[rank][streamId] - gpu.minMemAddr
-		copy(gpu.memory[offset:], req.Data)
-		gpu.mu.Unlock()
+		// streamsend can't move forward until it has a destination!
+		// spin or something?
+		gpu.streamDst[srcRank].cond.L.Lock()
+		for _, exists := gpu.streamDst[srcRank].info[streamId]; !exists; {
+			log.Printf("sleeping!")
+			gpu.streamDst[srcRank].cond.Wait()
+		}
+		log.Printf("awake!")
+		addr := gpu.streamDst[srcRank].info[streamId]
+		gpu.memory.Write(addr, req.Data)
+		gpu.streamDst[srcRank].cond.L.Unlock()
 	}
 }
 
@@ -299,30 +358,41 @@ func (gpu *GPUDeviceServer) SetInjectionConfig(
 	return &fipb.SetInjectionConfigResponse{}, nil
 }
 
-func (gpu *GPUDeviceServer) StreamSendThread() {
+func (gpu *GPUDeviceServer) StreamSendDispatch() {
 	fmt.Println("started streamsend thread")
 	for streamInfo := range gpu.streamSrc {
-		srcAddr, numBytes, dstRank := streamInfo.SendBuffAddr, streamInfo.NumBytes, streamInfo.DstRank
+		streamId, srcAddr, numBytes, dstRank := streamInfo.StreamId, streamInfo.SendBuffAddr, streamInfo.NumBytes, streamInfo.DstRank
+		go gpu.StreamSendExecute(streamId, srcAddr, numBytes, dstRank)
+	}
+}
 
-		// actually put this shit in a goroutine?
-		// what to do in error cases?
-		rpc_client := gpu.peers[dstRank]
+func (gpu *GPUDeviceServer) StreamSendExecute(
+	streamId, srcAddr, numBytes uint64,
+	dstRank uint32,
+) {
+	// what to do in error cases?
+	rpc_client := gpu.peers[dstRank]
 
-		stream, err := rpc_client.StreamSend(context.Background())
-		if err != nil {
-			log.Printf("GPUDevice failed to start stream to rank %d", dstRank)
-			continue
-		}
+	stream, err := rpc_client.StreamSend(context.Background())
+	if err != nil {
+		log.Printf("GPUDevice failed to start stream to rank %d", dstRank)
+		return
+	}
 
-		// not streaming in chunks. in cuda, you specify a datatype, which makes this make sense
-		offset := srcAddr - gpu.minMemAddr
-		stream.Send(&pb.DataChunk{Data: gpu.memory[offset : offset+numBytes]})
+	log.Printf("starting streamsendexecute with %d, %x, %x, %d", streamId, srcAddr, numBytes, dstRank)
+	// not streaming in chunks. in cuda, you specify a datatype, which makes this make sense
+	data, _ := gpu.memory.Read(srcAddr, numBytes)
+	dc := pb.DataChunk{
+		Data:     data,
+		StreamId: &pb.StreamId{Value: streamId},
+		SrcRank:  &pb.Rank{Value: gpu.rank},
+	}
+	stream.Send(&dc)
 
-		_, err = stream.CloseAndRecv()
-		if err != nil {
-			log.Printf("GPUDevice failed to receive stream response from rank %d", dstRank)
-			log.Printf("received error: %v", err)
-		}
+	_, err = stream.CloseAndRecv()
+	if err != nil {
+		log.Printf("received error: %v", err)
+		log.Printf("GPUDevice failed to receive stream response from rank %d", dstRank)
 	}
 }
 
