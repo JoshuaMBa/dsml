@@ -30,7 +30,12 @@ var (
 	)
 )
 
-func loadConfigFromJSON(filePath string) (int, *sl.GPUDeviceOptions, error) {
+type GPUDeviceServerConfig struct {
+	Port    int
+	Options *sl.GPUDeviceOptions
+}
+
+func loadConfigFromJSON(filePath string) (*GPUDeviceServerConfig, error) {
 	// Configuration struct for JSON parsing
 	type Config struct {
 		Port             int                 `json:"port"`
@@ -39,59 +44,73 @@ func loadConfigFromJSON(filePath string) (int, *sl.GPUDeviceOptions, error) {
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		return 0, nil, fmt.Errorf("failed to open JSON file: %w", err)
+		return nil, fmt.Errorf("failed to open JSON file: %w", err)
 	}
 	defer file.Close()
 
 	var config Config
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
-		return 0, nil, fmt.Errorf("failed to decode JSON: %w", err)
+		return nil, fmt.Errorf("failed to decode JSON: %w", err)
 	}
 
-	return config.Port, &config.GPUDeviceOptions, nil
+	return &GPUDeviceServerConfig{
+		Port:    config.Port,
+		Options: &config.GPUDeviceOptions,
+	}, nil
 }
 
-func main() {
-	flag.Parse()
-
-	var options *sl.GPUDeviceOptions
-	var serverPort int
-
-	if *configFile != "" {
-		// Load configuration from JSON
-		var err error
-		serverPort, options, err = loadConfigFromJSON(*configFile)
-		if err != nil {
-			log.Fatalf("failed to load configuration: %v", err)
-		}
-	} else {
-		// Use command-line flags if JSON file is not provided
-		serverPort = *port
-		options = sl.DefaultGPUDeviceOptions()
-		options.SleepNs = *sleepNs
-		options.FailureRate = *failureRate
-		options.ResponseOmissionRate = *responseOmissionRate
-	}
-
+func StartServer(config *GPUDeviceServerConfig) (*grpc.Server, net.Listener, error) {
 	// Start listening
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", serverPort))
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", config.Port))
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		return nil, nil, fmt.Errorf("failed to listen: %w", err)
 	}
 
 	// Create the server
 	s := grpc.NewServer(grpc.UnaryInterceptor(logging.MakeMiddleware(logging.MakeLogger())))
-	server, err := sl.MakeGPUDeviceServer(*options)
+	server, err := sl.MakeGPUDeviceServer(*config.Options)
 	if err != nil {
-		log.Fatalf("failed to start server: %q", err)
+		return nil, nil, fmt.Errorf("failed to start server: %w", err)
 	}
 
 	go server.StreamSendThread()
 
 	pb.RegisterGPUDeviceServer(s, server)
 	log.Printf("server listening at %v", lis.Addr())
-	if err := s.Serve(lis); err != nil {
+	return s, lis, nil
+}
+
+func main() {
+	flag.Parse()
+
+	var config *GPUDeviceServerConfig
+	if *configFile != "" {
+		// Load configuration from JSON
+		var err error
+		config, err = loadConfigFromJSON(*configFile)
+		if err != nil {
+			log.Fatalf("failed to load configuration: %v", err)
+		}
+	} else {
+		// Use command-line flags if JSON file is not provided
+		config = &GPUDeviceServerConfig{
+			Port: *port,
+			Options: &sl.GPUDeviceOptions{
+				SleepNs:              *sleepNs,
+				FailureRate:          *failureRate,
+				ResponseOmissionRate: *responseOmissionRate,
+			},
+		}
+	}
+
+	server, lis, err := StartServer(config)
+	if err != nil {
+		log.Fatalf("failed to start server: %v", err)
+	}
+	defer server.GracefulStop()
+
+	if err := server.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
 }

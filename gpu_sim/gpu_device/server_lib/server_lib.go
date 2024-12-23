@@ -15,7 +15,9 @@ import (
 	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 
 	// "google.golang.org/grpc"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -71,13 +73,15 @@ type GPUDeviceServer struct {
 	rank   uint32 // my rank in the communicator
 	nRanks uint32 // total number of gpus in the communicator
 
-	rankToAddress map[uint32]string // map between rank and addresses
+	rank2Address map[uint32]string // map between rank and addresses
 
 	////////////////////////////
 	// gpu communications, implementation detail
 	////////////////////////////
-	streamId atomic.Uint64        // my streamId when sending to others
-	peers    []pb.GPUDeviceClient // rpc handles for other gpus
+	streamId atomic.Uint64 // my streamId when sending to others
+
+	conns []*grpc.ClientConn
+	peers []pb.GPUDeviceClient // rpc handles for other gpus
 
 	streamSrc chan StreamSrcInfo
 
@@ -132,10 +136,10 @@ func MakeGPUDeviceServer(
 
 func MockGPUDeviceServer(deviceId, minMemAddr, maxMemAddr uint64, rankToAddress map[uint32]string) *GPUDeviceServer {
 	return &GPUDeviceServer{
-		deviceId:      deviceId,
-		minMemAddr:    minMemAddr,
-		maxMemAddr:    maxMemAddr,
-		rankToAddress: rankToAddress,
+		deviceId:     deviceId,
+		minMemAddr:   minMemAddr,
+		maxMemAddr:   maxMemAddr,
+		rank2Address: rankToAddress,
 	}
 }
 
@@ -153,8 +157,24 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 	}
 
 	gpu.rank = req.Rank.Value
-	gpu.rankToAddress = req.RankToAddress
+	gpu.rank2Address = req.RankToAddress
 	gpu.nRanks = uint32(len(req.RankToAddress))
+
+	// setup connections with peers
+	var opts []grpc.DialOption
+	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+	gpu.conns = make([]*grpc.ClientConn, gpu.nRanks)
+	gpu.peers = make([]pb.GPUDeviceClient, gpu.nRanks)
+	for rank := range gpu.nRanks {
+		if rank == gpu.rank {
+			continue
+		}
+
+		// handle this error!
+		gpu.conns[rank], _ = grpc.NewClient(gpu.rank2Address[rank], opts...)
+		gpu.peers[rank] = pb.NewGPUDeviceClient(gpu.conns[rank])
+	}
 
 	return &pb.SetupCommunicationResponse{
 		Success: true,
@@ -282,6 +302,7 @@ func (gpu *GPUDeviceServer) StreamSendThread() {
 	for streamInfo := range gpu.streamSrc {
 		srcAddr, numBytes, dstRank := streamInfo.SendBuffAddr, streamInfo.NumBytes, streamInfo.DstRank
 
+		// actually put this shit in a goroutine?
 		// what to do in error cases?
 		rpc_client := gpu.peers[dstRank]
 
@@ -299,5 +320,15 @@ func (gpu *GPUDeviceServer) StreamSendThread() {
 		if err != nil {
 			log.Printf("GPUDeviced failed to receive stream response from rank %d", dstRank)
 		}
+	}
+}
+
+func (gpu *GPUDeviceServer) GracefulStop() {
+	close(gpu.streamSrc)
+	for rank, conn := range gpu.conns {
+		if uint32(rank) == gpu.rank {
+			continue
+		}
+		defer conn.Close()
 	}
 }

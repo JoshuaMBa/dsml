@@ -23,7 +23,3 @@ func TestServerBasic(t *testing.T) {
 	assert.True(t, out.Metadata.DeviceId.Value == 11)
 
 }
-
-func TestSendRecvBasic(t *testing.T) {
-	opt1 := sl.DefaultGPUDeviceOptions()
-}
