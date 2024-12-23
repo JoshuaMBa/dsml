@@ -71,16 +71,14 @@ type GPUDeviceServer struct {
 	rank   uint32 // my rank in the communicator
 	nRanks uint32 // total number of gpus in the communicator
 
-	rank2Address map[uint32]string // map between rank and addresses
-
 	////////////////////////////
 	// gpu communications, implementation detail
 	////////////////////////////
-	streamId atomic.Uint64 // my streamId when sending to others
 
 	conns []*grpc.ClientConn
 	peers []pb.GPUDeviceClient // rpc handles for other gpus
 
+	streamId  atomic.Uint64 // my streamId when sending to others
 	streamSrc chan StreamSrcInfo
 
 	streamDst      []StreamDstMonitor // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
@@ -137,10 +135,9 @@ func MakeGPUDeviceServer(
 
 func MockGPUDeviceServer(deviceId, minMemAddr, maxMemAddr uint64, rankToAddress map[uint32]string) *GPUDeviceServer {
 	return &GPUDeviceServer{
-		deviceId:     deviceId,
-		minMemAddr:   minMemAddr,
-		maxMemAddr:   maxMemAddr,
-		rank2Address: rankToAddress,
+		deviceId:   deviceId,
+		minMemAddr: minMemAddr,
+		maxMemAddr: maxMemAddr,
 	}
 }
 
@@ -160,7 +157,6 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 	}
 
 	gpu.rank = req.Rank.Value
-	gpu.rank2Address = req.RankToAddress
 	gpu.nRanks = uint32(len(req.RankToAddress))
 
 	// setup connections with peers
@@ -175,7 +171,7 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 		}
 
 		// handle this error!
-		gpu.conns[rank], _ = grpc.NewClient(gpu.rank2Address[rank], opts...)
+		gpu.conns[rank], _ = grpc.NewClient(req.RankToAddress[rank], opts...)
 		gpu.peers[rank] = pb.NewGPUDeviceClient(gpu.conns[rank])
 	}
 
@@ -315,8 +311,6 @@ func (gpu *GPUDeviceServer) StreamSend(
 			return status.Errorf(codes.Internal, "failed to receive stream: %v", err)
 		}
 
-		// streamsend can't move forward until it has a destination!
-		// spin or something?
 		gpu.streamDst[srcRank].cond.L.Lock()
 		for _, exists := gpu.streamDst[srcRank].info[streamId]; !exists; {
 			log.Printf("sleeping!")
