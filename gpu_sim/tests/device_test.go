@@ -98,4 +98,12 @@ func TestSendRecvBasic(t *testing.T) {
 		})
 	assert.Equal(t, nil, err)
 
+	status_response, err := gpus[0].GetStreamStatus(context.Background(),
+		&pb.GetStreamStatusRequest{
+			StreamId: sendResp.StreamId,
+			SrcRank:  &pb.Rank{Value: 1},
+		})
+	// assert.Equal(t, pb.Status_IN_PROGRESS, status_response.Status)
+	assert.Equal(t, nil, err)
+	t.Logf("status resp: %v", status_response)
 }

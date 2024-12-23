@@ -1,3 +1,4 @@
 logs
 .DS_Store
 gpu_sim/.DS_Store
+device_*

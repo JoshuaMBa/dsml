@@ -7,6 +7,7 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/JoshuaMBa/dsml/failure_injection"
 	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
@@ -81,10 +82,8 @@ type GPUDeviceServer struct {
 	streamId  atomic.Uint64 // my streamId when sending to others
 	streamSrc chan StreamSrcInfo
 
-	streamDst      []StreamDstMonitor // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
-	streamStatuses sync.Map
-
-	streamSendSignal chan int
+	streamDst    []StreamDstMonitor // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
+	streamStatus []sync.Map         // lookup is srcRank->streamid, tells status of streams being received, for streams that this gpu is sending, lookup stats[gpu.rank]
 }
 
 type StreamSrcInfo struct {
@@ -128,8 +127,7 @@ func MakeGPUDeviceServer(
 		maxMemAddr: mem.MaxAddr(),
 		streamSrc:  make(chan StreamSrcInfo, 16),
 		// we don't do streamdst until we have all the ranks?
-		streamStatuses:   sync.Map{},
-		streamSendSignal: make(chan int),
+		// ditto for streamstatus
 	}, nil
 }
 
@@ -184,6 +182,9 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 		}
 	}
 
+	// setup statuses
+	gpu.streamStatus = make([]sync.Map, gpu.nRanks)
+
 	return &pb.SetupCommunicationResponse{
 		Success: true,
 	}, nil
@@ -219,16 +220,15 @@ func (gpu *GPUDeviceServer) BeginSend(
 				start, end, gpu.minMemAddr, gpu.maxMemAddr)
 	}
 
-	streamId := gpu.streamId.Load()
-
 	// protobuf default value issue
 	var dstRank uint32 = 0
 	if req.DstRank != nil {
 		dstRank = req.DstRank.Value
 	}
+	streamId := gpu.streamId.Load()
 
 	gpu.streamSrc <- StreamSrcInfo{streamId, req.SendBuffAddr.Value, req.NumBytes, dstRank}
-	gpu.streamStatuses.Store(streamId, pb.Status_IN_PROGRESS)
+	gpu.streamStatus[gpu.rank].Store(streamId, pb.Status_IN_PROGRESS)
 
 	gpu.streamId.Add(1)
 
@@ -239,6 +239,8 @@ func (gpu *GPUDeviceServer) BeginReceive(
 	ctx context.Context,
 	req *pb.BeginReceiveRequest,
 ) (*pb.BeginReceiveResponse, error) {
+
+	log.Printf("recv req: %v", req)
 
 	start := req.RecvBuffAddr.Value
 	end := start + req.NumBytes
@@ -267,6 +269,9 @@ func (gpu *GPUDeviceServer) BeginReceive(
 	// assign destination info
 	log.Printf("info is: %v", gpu.streamDst[srcRank].info)
 	gpu.streamDst[srcRank].info[streamId] = req.RecvBuffAddr.Value
+
+	// update status
+	gpu.streamStatus[srcRank].Store(streamId, pb.Status_IN_PROGRESS)
 
 	// wake up waiting threads
 	gpu.streamDst[srcRank].cond.Broadcast()
@@ -297,20 +302,22 @@ func (gpu *GPUDeviceServer) StreamSend(
 		}
 
 		if err == io.EOF {
-			gpu.streamStatuses.Store(streamId, pb.Status_SUCCESS)
+			gpu.streamStatus[srcRank].Store(streamId, pb.Status_SUCCESS)
 
 			// End of stream, send response
 			response := &pb.StreamSendResponse{
 				Success: true,
 			}
+			log.Printf("End of stream")
 			return stream.SendAndClose(response)
 		}
 		if err != nil {
 			// Handle errors during streaming
-			gpu.streamStatuses.Store(streamId, pb.Status_FAILED)
+			gpu.streamStatus[srcRank].Store(streamId, pb.Status_FAILED)
 			return status.Errorf(codes.Internal, "failed to receive stream: %v", err)
 		}
 
+		time.Sleep(time.Second * 10)
 		gpu.streamDst[srcRank].cond.L.Lock()
 		for _, exists := gpu.streamDst[srcRank].info[streamId]; !exists; {
 			log.Printf("sleeping!")
@@ -327,9 +334,21 @@ func (gpu *GPUDeviceServer) GetStreamStatus(
 	ctx context.Context,
 	req *pb.GetStreamStatusRequest,
 ) (*pb.GetStreamStatusResponse, error) {
-	streamStatus, ok := gpu.streamStatuses.Load(req.StreamId.Value)
+
+	// protobuf defaults again...
+	var streamId uint64 = 0
+	var srcRank uint32 = 0
+	if req.StreamId != nil {
+		streamId = req.StreamId.Value
+	}
+	if req.SrcRank != nil {
+		srcRank = req.SrcRank.Value
+	}
+	log.Printf("status request: %v", req)
+
+	streamStatus, ok := gpu.streamStatus[srcRank].Load(streamId)
 	if !ok {
-		return nil, status.Errorf(codes.NotFound, "stream ID %d not found", req.StreamId.Value)
+		return nil, status.Errorf(codes.NotFound, "stream ID %d not found", streamId)
 	}
 
 	return &pb.GetStreamStatusResponse{
@@ -435,7 +454,6 @@ func (gpu *GPUDeviceServer) Memcpy(
 	}
 }
 
-
 func (gpu *GPUDeviceServer) hostToDevice(req *pb.MemcpyHostToDeviceRequest) error {
 	start := req.DstMemAddr.Value
 	end := start + uint64(len(req.HostSrcData))
@@ -459,4 +477,3 @@ func (gpu *GPUDeviceServer) deviceToHost(req *pb.MemcpyDeviceToHostRequest) ([]b
 
 	return gpu.memory.Read(start, req.NumBytes)
 }
-
