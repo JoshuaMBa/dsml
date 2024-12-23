@@ -1,5 +1,6 @@
 syntax = "proto3";
 
+
 package gpu_sim;
 
 option go_package = "github.com/JoshuaMBa/dsml/gpu_sim/proto";
@@ -94,6 +95,7 @@ message GetStreamStatusRequest {
 }
 
 enum Status {
+  READY = 0;
   IN_PROGRESS = 1;
   SUCCESS = 2;
   FAILED = 3;
