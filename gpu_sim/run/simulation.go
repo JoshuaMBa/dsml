@@ -40,8 +40,9 @@ func main() {
 		return
 	}
 
-
 	firstDevice := commInitResponse.Devices[0]
+	secondDevice := commInitResponse.Devices[1]
+	// thirdDevice := commInitResponse.Devices[2]
 
 	commId := commInitResponse.CommId
 	statusResponse, err := coordinatorClient.GetCommStatus(ctx, &pb.GetCommStatusRequest{
@@ -69,12 +70,31 @@ func main() {
 	}
 	log.Printf("Memcpy Host-to-Device Success: %v", hostToDeviceResponse.GetHostToDevice().Success)
 
+	memAddrs := map[uint32]*pb.MemAddr{
+		0: &pb.MemAddr{Value: firstDevice.MinMemAddr.Value},
+		1: &pb.MemAddr{Value: secondDevice.MinMemAddr.Value},
+		2: &pb.MemAddr{Value: thirdDevice.MinMemAddr.Value},
+	}
+	
+	allReduceReq := &pb.AllReduceRingRequest{
+		CommId:  commId,
+		Count:   uint64(12),
+		Op:      pb.ReduceOp_SUM,
+		MemAddrs: memAddrs,
+	}
+	
+	allReduceResponse, err := coordinatorClient.AllReduceRing(ctx, allReduceReq)
+	if err != nil {
+		log.Fatalf("AllReduceRing failed: %v", err)
+	}
+	log.Printf("AllReduceRing Success: %v", allReduceResponse.Success)
+
 	deviceToHostReq := &pb.MemcpyRequest{
 		Either: &pb.MemcpyRequest_DeviceToHost{
 			DeviceToHost: &pb.MemcpyDeviceToHostRequest{
 				NumBytes:    uint64(12),
-				SrcDeviceId: &pb.DeviceId{Value: firstDevice.DeviceId.Value},
-				SrcMemAddr:  &pb.MemAddr{Value: firstDevice.MinMemAddr.Value},
+				SrcDeviceId: &pb.DeviceId{Value: secondDevice.DeviceId.Value},
+				SrcMemAddr:  &pb.MemAddr{Value: secondDevice.MinMemAddr.Value},
 			},
 		},
 	}
