@@ -65,17 +65,27 @@ func TestSendRecvBasic(t *testing.T) {
 		rank2Address[i] = addr
 	}
 
-	for _, gpu := range gpus {
-		gpu.SetupCommunication(context.Background(), &pb.SetupCommunicationRequest{RankToAddress: rank2Address})
+	for i, gpu := range gpus {
+		_, err := gpu.SetupCommunication(
+			context.Background(),
+			&pb.SetupCommunicationRequest{
+				RankToAddress: rank2Address,
+				Rank:          &pb.Rank{Value: uint32(i)},
+			})
+		if err != nil {
+			t.Logf("Error in SetupCommunication: %v", err)
+		}
+		assert.Equal(t, nil, err)
 	}
 
 	// perform send and receive
-	// resp, _ := gpus[0].BeginSend(context.Background(),
-	// 	&pb.BeginSendRequest{
-	// 		SendBuffAddr: &pb.MemAddr{Value: gpuMetadatas[0].MinMemAddr},
-	// 		NumBytes:     0x100,
-	// 		DstRank:      &pb.Rank{Value: 1},
-	// 	})
+	resp, err := gpus[0].BeginSend(context.Background(),
+		&pb.BeginSendRequest{
+			SendBuffAddr: &pb.MemAddr{Value: gpuMetadatas[0].MinMemAddr},
+			NumBytes:     0x100,
+			DstRank:      &pb.Rank{Value: 1},
+		})
+	assert.Equal(t, nil, err)
 
-	// t.Logf("streamid: %d", resp.StreamId.Value)
+	t.Logf("streamid: %d", resp.StreamId.Value)
 }

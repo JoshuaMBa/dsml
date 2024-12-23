@@ -2,7 +2,6 @@ package server_lib
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -147,13 +146,16 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 	ctx context.Context,
 	req *pb.SetupCommunicationRequest,
 ) (*pb.SetupCommunicationResponse, error) {
+	// you should not be allowed to call this more than once
 	gpu.mu.Lock()
 	defer gpu.mu.Unlock()
 	if req == nil || req.RankToAddress == nil {
-		return nil, errors.New("invalid SetupCommunicationRequest: rankToAddress is nil")
+		return nil, status.Error(codes.InvalidArgument, "missing RankToAddress mappings")
 	}
+	log.Printf("rank2address is : %v", req.RankToAddress)
+	log.Printf("my rank is : %v", req.Rank.Value)
 	if _, exists := req.RankToAddress[req.Rank.Value]; !exists {
-		return nil, errors.New("current rank not found in rankToAddress")
+		return nil, status.Error(codes.InvalidArgument, "did not specify rank for device")
 	}
 
 	gpu.rank = req.Rank.Value
@@ -318,7 +320,8 @@ func (gpu *GPUDeviceServer) StreamSendThread() {
 
 		_, err = stream.CloseAndRecv()
 		if err != nil {
-			log.Printf("GPUDeviced failed to receive stream response from rank %d", dstRank)
+			log.Printf("GPUDevice failed to receive stream response from rank %d", dstRank)
+			log.Printf("received error: %v", err)
 		}
 	}
 }

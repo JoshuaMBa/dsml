@@ -42,5 +42,5 @@ kill-coordinator:
 		echo "No coordinator servers running"; \
 	fi
 
-clean:
+clean: kill-coordinator kill-devices
 	rm -rf logs
