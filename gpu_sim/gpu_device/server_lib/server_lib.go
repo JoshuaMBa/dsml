@@ -7,7 +7,6 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/JoshuaMBa/dsml/failure_injection"
 	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
@@ -317,7 +316,6 @@ func (gpu *GPUDeviceServer) StreamSend(
 			return status.Errorf(codes.Internal, "failed to receive stream: %v", err)
 		}
 
-		time.Sleep(time.Second * 10)
 		gpu.streamDst[srcRank].cond.L.Lock()
 		for _, exists := gpu.streamDst[srcRank].info[streamId]; !exists; {
 			log.Printf("sleeping!")
