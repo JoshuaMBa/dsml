@@ -6,7 +6,7 @@ import (
 	"os"
 	"strconv"
 
-	// "log"
+	"log"
 	// "sort"
 	"sync"
 	// "sync/atomic"
@@ -126,6 +126,7 @@ func (server *GPUCoordinatorServer) CommInit(
 			status.Error(codes.OutOfRange, "num devices in communicator exceeded num gpus available")
 	}
 
+	var metadata []*pb.DeviceMetadata
 	var devs []GPUDeviceInfo
 	var using []uint32
 
@@ -163,6 +164,23 @@ func (server *GPUCoordinatorServer) CommInit(
 			}, err
 		}
 
+		gpu := pb.NewGPUDeviceClient(conn)
+		res, err := gpu.GetDeviceMetadata(ctx, &pb.GetDeviceMetadataRequest{})
+		if err != nil {
+			log.Printf("GPUCoordinatorServer: MakeGPUCoordinatorServer: failed to retrieve metadata on device (addr: %v) ", address)
+			server.mu.Lock()
+			server.comms[commId] = Communicator{
+				using:  using,
+				status: pb.Status_FAILED,
+			}
+			server.commDestroyInternal(commId)
+			server.mu.Unlock()
+			return &pb.CommInitResponse{
+				Success: false,
+				CommId:  0,
+			}, err
+		}
+		metadata = append(metadata, res.Metadata)
 		connections = append(connections, conn)
 	}
 
@@ -201,6 +219,7 @@ func (server *GPUCoordinatorServer) CommInit(
 	res := &pb.CommInitResponse{
 		Success: true,
 		CommId:  commId,
+		Devices: metadata,
 	}
 
 	return res, nil
