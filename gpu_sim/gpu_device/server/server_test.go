@@ -7,17 +7,23 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 	sl "github.com/JoshuaMBa/dsml/gpu_sim/gpu_device/server_lib"
+	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 )
 
 func TestServerBasic(t *testing.T) {
 
-	gpuDeviceService, _ := sl.MakeGPUDeviceServer(*sl.DefaultGPUDeviceOptions())
+	gpu, _ := sl.MakeGPUDeviceServer(*sl.DefaultGPUDeviceOptions())
+	go gpu.StreamSendThread()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := gpuDeviceService.GetDeviceMetadata(ctx, &pb.GetDeviceMetadataRequest{})
+	out, err := gpu.GetDeviceMetadata(ctx, &pb.GetDeviceMetadataRequest{})
 	assert.True(t, err == nil)
 	assert.True(t, out.Metadata.DeviceId.Value == 11)
+
+}
+
+func TestSendRecvBasic(t *testing.T) {
+	opt1 := sl.DefaultGPUDeviceOptions()
 }

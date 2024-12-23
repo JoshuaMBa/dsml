@@ -1,0 +1,10 @@
+{
+  "port": 5002,
+  "gpu_device_options": {
+    "sleep_ns": 0,
+    "failure_rate": 0,
+    "response_omission_rate": 0,
+    "device_id": 12,
+    "memory_needed": 4096
+  }
+}

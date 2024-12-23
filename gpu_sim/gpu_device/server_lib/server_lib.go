@@ -3,14 +3,15 @@ package server_lib
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/JoshuaMBa/dsml/failure_injection"
 	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
-	"github.com/JoshuaMBa/dsml/gpu_sim/proto"
 	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 
 	// "google.golang.org/grpc"
@@ -20,17 +21,12 @@ import (
 
 // options for service init
 type GPUDeviceOptions struct {
-	// failure injection config params
-	SleepNs              int64
-	FailureRate          int64
-	ResponseOmissionRate int64
-
-	////////////////////////////
-	// Stuff added by michael //
-	////////////////////////////
-	DeviceId     uint64
-	MemoryNeeded uint64 // size of memory needed in bytes
-
+	// Failure injection config params
+	SleepNs              int64  `json:"sleep_ns"`
+	FailureRate          int64  `json:"failure_rate"`
+	ResponseOmissionRate int64  `json:"response_omission_rate"`
+	DeviceId             uint64 `json:"device_id"`
+	MemoryNeeded         uint64 `json:"memory_needed"` // Size of memory needed in bytes
 }
 
 func DefaultGPUDeviceOptions() *GPUDeviceOptions {
@@ -44,7 +40,7 @@ func DefaultGPUDeviceOptions() *GPUDeviceOptions {
 }
 
 type GPUDeviceServer struct {
-	proto.UnimplementedGPUDeviceServer
+	pb.UnimplementedGPUDeviceServer
 	// options are read-only and intended to be immutable during the lifetime of
 	// the service.  The failure injection config (in the FailureInjector) is
 	// mutable (via SetInjectionConfigRequest-s) after the server starts.
@@ -59,8 +55,8 @@ type GPUDeviceServer struct {
 	//    simulate memory     //
 	////////////////////////////
 
-	memory map[uint64][]byte // gpu's memory space
-	mu     sync.Mutex        // thread safe memory
+	memory []byte
+	mu     sync.Mutex // thread safe memory
 
 	////////////////////////////
 	// device info (i don't anticipate ever using this, maybe it goes into options?)
@@ -80,13 +76,16 @@ type GPUDeviceServer struct {
 	////////////////////////////
 	// gpu communications, implementation detail
 	////////////////////////////
-	streamId atomic.Uint64         // my streamId when sending to others
-	peers    []*pb.GPUDeviceClient // rpc handles for other gpus
+	streamId atomic.Uint64        // my streamId when sending to others
+	peers    []pb.GPUDeviceClient // rpc handles for other gpus
 
-	streamSrc      map[uint64]StreamSrcInfo // where the streams i send come from: (lookup is streamID->{src addr + size})
-	streamDest     map[uint64]uint64        // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
-	currentStream  map[uint32]uint64        // which stream for each sender (lookup is rank->streamId)
+	streamSrc chan StreamSrcInfo
+
+	streamDest     map[uint32]map[uint64]uint64 // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
+	currentStream  map[uint32]uint64            // which stream for each sender (lookup is rank->streamId)
 	streamStatuses sync.Map
+
+	streamSendSignal chan int
 }
 
 type StreamSrcInfo struct {
@@ -110,17 +109,24 @@ func MakeGPUDeviceServer(
 		options.FailureRate,
 		options.ResponseOmissionRate,
 	)
+
+	// preallocate memory, if it's big it should use mmap
+	mem := make([]byte, options.MemoryNeeded)
+	startAddr := uint64(uintptr(unsafe.Pointer(&mem[0])))
+	endAddr := startAddr + options.MemoryNeeded
+
 	return &GPUDeviceServer{
-		options:        options,
-		fi:             fi,
-		deviceId:       options.DeviceId,
-		minMemAddr:     0,
-		maxMemAddr:     options.MemoryNeeded,
-		memory:         make(map[uint64][]byte),
-		streamSrc:      make(map[uint64]StreamSrcInfo),
-		streamDest:     make(map[uint64]uint64),
-		currentStream:  make(map[uint32]uint64),
-		streamStatuses: sync.Map{},
+		options:          options,
+		fi:               fi,
+		deviceId:         options.DeviceId,
+		minMemAddr:       startAddr,
+		maxMemAddr:       endAddr,
+		memory:           mem,
+		streamSrc:        make(chan StreamSrcInfo, 16),
+		streamDest:       make(map[uint32]map[uint64]uint64),
+		currentStream:    make(map[uint32]uint64),
+		streamStatuses:   sync.Map{},
+		streamSendSignal: make(chan int),
 	}, nil
 }
 
@@ -174,14 +180,23 @@ func (gpu *GPUDeviceServer) BeginSend(
 ) (*pb.BeginSendResponse, error) {
 	// get current stream id and increment
 	// kick off goroutine actually sending data using streamsend
+
+	// TODO: Add range checks!
+	start := req.SendBuffAddr.Value
+	end := start + req.NumBytes
+	if start < gpu.minMemAddr || end >= gpu.maxMemAddr {
+		return &pb.BeginSendResponse{Initiated: false},
+			status.Errorf(codes.InvalidArgument,
+				"invalid argument: source address range [0x%x, 0x%x) not in GPU memory range [0x%x, 0x%x)",
+				start, end, gpu.minMemAddr, gpu.maxMemAddr)
+	}
+
 	streamId := gpu.streamId.Load()
 
-	gpu.streamSrc[streamId-1] = StreamSrcInfo{req.SendBuffAddr.Value, req.NumBytes, req.DstRank.Value}
+	gpu.streamSrc <- StreamSrcInfo{req.SendBuffAddr.Value, req.NumBytes, req.DstRank.Value}
 	gpu.streamStatuses.Store(streamId, pb.Status_READY)
 
 	gpu.streamId.Add(1)
-
-	// add error checking
 
 	return &pb.BeginSendResponse{Initiated: true, StreamId: &pb.StreamId{Value: streamId}}, nil
 }
@@ -191,7 +206,7 @@ func (gpu *GPUDeviceServer) BeginReceive(
 	req *pb.BeginReceiveRequest,
 ) (*pb.BeginReceiveResponse, error) {
 	gpu.mu.Lock()
-	gpu.streamDest[req.StreamId.Value] = req.RecvBuffAddr.Value
+	gpu.streamDest[req.SrcRank.Value][req.StreamId.Value] = req.RecvBuffAddr.Value
 	gpu.mu.Unlock()
 
 	gpu.streamStatuses.Store(req.StreamId.Value, pb.Status_IN_PROGRESS)
@@ -204,6 +219,7 @@ func (gpu *GPUDeviceServer) BeginReceive(
 func (gpu *GPUDeviceServer) StreamSend(
 	stream pb.GPUDevice_StreamSendServer,
 ) error {
+	var rank uint32
 	var streamId uint64
 
 	for {
@@ -226,16 +242,8 @@ func (gpu *GPUDeviceServer) StreamSend(
 
 		// Simulate writing the data to memory
 		gpu.mu.Lock()
-		for addr, data := range req.Data {
-			uintAddr := uint64(addr)
-
-			if uintAddr < gpu.minMemAddr || uintAddr >= gpu.maxMemAddr {
-				gpu.mu.Unlock()
-				return status.Errorf(codes.InvalidArgument, "invalid memory address: %d", uintAddr)
-			}
-
-			gpu.memory[uintAddr] = []byte{data}
-		}
+		offset := gpu.streamDest[rank][streamId] - gpu.minMemAddr
+		copy(gpu.memory[offset:], req.Data)
 		gpu.mu.Unlock()
 	}
 }
@@ -270,15 +278,26 @@ func (gpu *GPUDeviceServer) SetInjectionConfig(
 }
 
 func (gpu *GPUDeviceServer) StreamSendThread() {
-	for {
-		// calls streamsend on things in streamstatus which are not ready!
-		// for now will just acquire lock
-		gpu.streamStatuses.Range(func(streamId, status interface{}) bool {
-			if status == pb.Status_READY {
-				return false
-			} else {
-				return true // true to continue
-			}
-		})
+	fmt.Println("started streamsend thread")
+	for streamInfo := range gpu.streamSrc {
+		srcAddr, numBytes, dstRank := streamInfo.SendBuffAddr, streamInfo.NumBytes, streamInfo.DstRank
+
+		// what to do in error cases?
+		rpc_client := gpu.peers[dstRank]
+
+		stream, err := rpc_client.StreamSend(context.Background())
+		if err != nil {
+			log.Printf("GPUDevice failed to start stream to rank %d", dstRank)
+			continue
+		}
+
+		// not streaming in chunks. in cuda, you specify a datatype, which makes this make sense
+		offset := srcAddr - gpu.minMemAddr
+		stream.Send(&pb.DataChunk{Data: gpu.memory[offset : offset+numBytes]})
+
+		_, err = stream.CloseAndRecv()
+		if err != nil {
+			log.Printf("GPUDeviced failed to receive stream response from rank %d", dstRank)
+		}
 	}
 }
