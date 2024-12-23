@@ -20,6 +20,6 @@ func TestServerBasic(t *testing.T) {
 	defer cancel()
 	out, err := gpu.GetDeviceMetadata(ctx, &pb.GetDeviceMetadataRequest{})
 	assert.True(t, err == nil)
-	assert.True(t, out.Metadata.DeviceId.Value == 11)
+	assert.True(t, out.Metadata.DeviceId.Value == sl.DefaultGPUDeviceOptions().DeviceId)
 
 }

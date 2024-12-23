@@ -1,17 +1,17 @@
 {
     "gpu_devices": [
       {
-        "device_id": 0,
+        "device_id": 11,
         "ip": "127.0.0.1",
         "port": 5001
       },
       {
-        "device_id": 1,
+        "device_id": 12,
         "ip": "127.0.0.1",
         "port": 5002
       },
       {
-        "device_id": 2,
+        "device_id": 13,
         "ip": "127.0.0.1",
         "port": 5003
       }

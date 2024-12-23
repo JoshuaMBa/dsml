@@ -40,6 +40,9 @@ func main() {
 		return
 	}
 
+
+	firstDevice := commInitResponse.Devices[0]
+
 	commId := commInitResponse.CommId
 	statusResponse, err := coordinatorClient.GetCommStatus(ctx, &pb.GetCommStatusRequest{
 		CommId: commId,
@@ -50,6 +53,37 @@ func main() {
 
 	fmt.Printf("Communicator %d status: %v\n", commId, statusResponse.Status)
 
+	hostToDeviceReq := &pb.MemcpyRequest{
+		Either: &pb.MemcpyRequest_HostToDevice{
+			HostToDevice: &pb.MemcpyHostToDeviceRequest{
+				HostSrcData: []byte("Hello, GPU!"),
+				DstDeviceId: &pb.DeviceId{Value: firstDevice.DeviceId.Value},
+				DstMemAddr:  &pb.MemAddr{Value: firstDevice.MinMemAddr.Value},
+			},
+		},
+	}
+
+	hostToDeviceResponse, err := coordinatorClient.Memcpy(ctx, hostToDeviceReq)
+	if err != nil {
+		log.Fatalf("Memcpy to device failed: %v", err)
+	}
+	log.Printf("Memcpy Host-to-Device Success: %v", hostToDeviceResponse.GetHostToDevice().Success)
+
+	deviceToHostReq := &pb.MemcpyRequest{
+		Either: &pb.MemcpyRequest_DeviceToHost{
+			DeviceToHost: &pb.MemcpyDeviceToHostRequest{
+				NumBytes:    uint64(12),
+				SrcDeviceId: &pb.DeviceId{Value: firstDevice.DeviceId.Value},
+				SrcMemAddr:  &pb.MemAddr{Value: firstDevice.MinMemAddr.Value},
+			},
+		},
+	}
+	deviceToHostResponse, err := coordinatorClient.Memcpy(ctx, deviceToHostReq)
+	if err != nil {
+		log.Fatalf("Memcpy from device failed: %v", err)
+	}
+	log.Printf("Memcpy Device-to-Host got data: %s", string(deviceToHostResponse.GetDeviceToHost().DstData))
+	
 	destroyResponse, err := coordinatorClient.CommDestroy(ctx, &pb.CommDestroyRequest{
 		CommId: commId,
 	})

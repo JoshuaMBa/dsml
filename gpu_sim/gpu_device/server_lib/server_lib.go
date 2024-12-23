@@ -399,3 +399,64 @@ func (gpu *GPUDeviceServer) GracefulStop() {
 		defer conn.Close()
 	}
 }
+
+func (gpu *GPUDeviceServer) Memcpy(
+	ctx context.Context,
+	req *pb.MemcpyRequest,
+) (*pb.MemcpyResponse, error) {
+	gpu.mu.Lock()
+	defer gpu.mu.Unlock()
+
+	switch x := req.Either.(type) {
+	case *pb.MemcpyRequest_HostToDevice:
+		err := gpu.hostToDevice(x.HostToDevice)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "HostToDevice failed: %v", err)
+		}
+		return &pb.MemcpyResponse{
+			Either: &pb.MemcpyResponse_HostToDevice{
+				HostToDevice: &pb.MemcpyHostToDeviceResponse{Success: true},
+			},
+		}, nil
+
+	case *pb.MemcpyRequest_DeviceToHost:
+		data, err := gpu.deviceToHost(x.DeviceToHost)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "DeviceToHost failed: %v", err)
+		}
+		return &pb.MemcpyResponse{
+			Either: &pb.MemcpyResponse_DeviceToHost{
+				DeviceToHost: &pb.MemcpyDeviceToHostResponse{DstData: data},
+			},
+		}, nil
+
+	default:
+		return nil, status.Error(codes.InvalidArgument, "invalid Memcpy request type")
+	}
+}
+
+
+func (gpu *GPUDeviceServer) hostToDevice(req *pb.MemcpyHostToDeviceRequest) error {
+	start := req.DstMemAddr.Value
+	end := start + uint64(len(req.HostSrcData))
+
+	if start < gpu.minMemAddr || end > gpu.maxMemAddr {
+		return fmt.Errorf("destination address range [0x%x, 0x%x) is out of GPU memory range [0x%x, 0x%x)",
+			start, end, gpu.minMemAddr, gpu.maxMemAddr)
+	}
+
+	return gpu.memory.Write(start, req.HostSrcData)
+}
+
+func (gpu *GPUDeviceServer) deviceToHost(req *pb.MemcpyDeviceToHostRequest) ([]byte, error) {
+	start := req.SrcMemAddr.Value
+	end := start + req.NumBytes
+
+	if start < gpu.minMemAddr || end > gpu.maxMemAddr {
+		return nil, fmt.Errorf("source address range [0x%x, 0x%x) is out of GPU memory range [0x%x, 0x%x)",
+			start, end, gpu.minMemAddr, gpu.maxMemAddr)
+	}
+
+	return gpu.memory.Read(start, req.NumBytes)
+}
+

@@ -47,6 +47,8 @@ service GPUDevice {
 
   // For the coordinator to know if a stream has completed.
   rpc GetStreamStatus(GetStreamStatusRequest) returns (GetStreamStatusResponse) {}
+
+  rpc Memcpy(MemcpyRequest) returns (MemcpyResponse) {}
 }
 
 message GetDeviceMetadataRequest {

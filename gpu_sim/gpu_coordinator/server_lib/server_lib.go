@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"strconv"
+	"fmt"
 
 	"log"
 	// "sort"
@@ -292,7 +293,49 @@ func (server *GPUCoordinatorServer) Memcpy(
 	ctx context.Context,
 	req *pb.MemcpyRequest,
 ) (*pb.MemcpyResponse, error) {
-	panic("unimplemented")
+	server.mu.Lock()
+	defer server.mu.Unlock()
+
+	var targetDeviceId uint64
+	switch x := req.Either.(type) {
+	case *pb.MemcpyRequest_HostToDevice:
+		targetDeviceId = x.HostToDevice.DstDeviceId.Value
+	case *pb.MemcpyRequest_DeviceToHost:
+		targetDeviceId = x.DeviceToHost.SrcDeviceId.Value
+	default:
+		return nil, status.Error(codes.InvalidArgument, "invalid Memcpy request type")
+	}
+
+	fmt.Printf("Memcpy called for targetDeviceId: %d\n", targetDeviceId)
+
+	var targetGPU pb.GPUDeviceClient
+	for cid, comm := range server.comms {
+		fmt.Printf("Comm ID: %d\n", cid)
+		for i, u := range comm.using {
+			deviceID := uint64(server.gpuInfos.GPUDevices[u].DeviceID)
+			fmt.Printf("Checking DeviceID: %d against targetDeviceId: %d\n", deviceID, targetDeviceId)
+			if uint64(server.gpuInfos.GPUDevices[u].DeviceID) == targetDeviceId {
+				targetGPU = pb.NewGPUDeviceClient(comm.connections[i])
+				break
+			}
+		}
+		if targetGPU != nil {
+			break
+		}
+	}
+	fmt.Printf("Memcpy called for targetDeviceId: %d\n", targetDeviceId)
+
+	if targetGPU == nil {
+		return nil, status.Error(codes.NotFound, "target device not found")
+	}
+
+	// Forward the Memcpy request to the target GPU device
+	resp, err := targetGPU.Memcpy(ctx, req)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "Memcpy operation failed: %v", err)
+	}
+
+	return resp, nil
 }
 
 ////////////////////////////////////////////
