@@ -94,6 +94,7 @@ message StreamSendResponse {
 
 message GetStreamStatusRequest {
   StreamId streamId = 1;
+  Rank srcRank = 2;
 }
 
 enum Status {
