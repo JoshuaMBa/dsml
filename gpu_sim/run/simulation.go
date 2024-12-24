@@ -42,7 +42,7 @@ func main() {
 
 	firstDevice := commInitResponse.Devices[0]
 	secondDevice := commInitResponse.Devices[1]
-	// thirdDevice := commInitResponse.Devices[2]
+	thirdDevice := commInitResponse.Devices[2]
 
 	commId := commInitResponse.CommId
 	statusResponse, err := coordinatorClient.GetCommStatus(ctx, &pb.GetCommStatusRequest{
