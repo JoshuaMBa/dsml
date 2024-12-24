@@ -11,6 +11,7 @@ import (
 	"github.com/JoshuaMBa/dsml/failure_injection"
 	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
 	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
+	"github.com/JoshuaMBa/dsml/utils/convert"
 
 	// "google.golang.org/grpc"
 	"google.golang.org/grpc"
@@ -492,27 +493,27 @@ func (gpu *GPUDeviceServer) deviceToHost(req *pb.MemcpyDeviceToHostRequest) ([]b
 
 func reduce(op pb.ReduceOp, srcData, reqData []byte) []byte {
 	// both are disposable tbh
-	x, y := BytesToFloat64(srcData), BytesToFloat64(reqData)
+	x, y := convert.BytesToFloat64(srcData), convert.BytesToFloat64(reqData)
 	switch op {
 	case pb.ReduceOp_NIL:
-		return Float64ToBytes(y)
+		return convert.Float64ToBytes(y)
 	case pb.ReduceOp_SUM:
-		return Float64ToBytes(x + y)
+		return convert.Float64ToBytes(x + y)
 	case pb.ReduceOp_PROD:
-		return Float64ToBytes(x * y)
+		return convert.Float64ToBytes(x * y)
 	case pb.ReduceOp_MIN:
 		if x < y {
-			return Float64ToBytes(x)
+			return convert.Float64ToBytes(x)
 		} else {
-			return Float64ToBytes(y)
+			return convert.Float64ToBytes(y)
 		}
 	case pb.ReduceOp_MAX:
 		if x > y {
-			return Float64ToBytes(x)
+			return convert.Float64ToBytes(x)
 		} else {
-			return Float64ToBytes(y)
+			return convert.Float64ToBytes(y)
 		}
 	default:
-		return Float64ToBytes(0)
+		return convert.Float64ToBytes(0)
 	}
 }

@@ -1,4 +1,4 @@
-package server_lib
+package util
 
 import (
 	"encoding/binary"
