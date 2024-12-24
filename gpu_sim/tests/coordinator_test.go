@@ -13,24 +13,25 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func AllReduceRingBasic(t *testing.T, coordinatorAddr string, numDevices uint32, op pb.ReduceOp, operation func(float64, float64) float64) {
-	coordinatorConn, err := grpc.Dial(coordinatorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatalf("Failed to connect to GPUCoordinator: %v", err)
-	}
-	defer coordinatorConn.Close()
-	coordinatorClient := pb.NewGPUCoordinatorClient(coordinatorConn)
-
+func AllReduceRingBasic(
+	t *testing.T,
+	coordinatorClient pb.GPUCoordinatorClient,
+	numDevices uint32,
+	dataLength uint32,
+	op pb.ReduceOp,
+	operation func(float64, float64) float64,
+) {
 	ctx := context.Background()
 	commInitResponse, err := coordinatorClient.CommInit(ctx, &pb.CommInitRequest{
 		NumDevices: numDevices,
 	})
-
 	if err != nil || commInitResponse.Success == false {
 		t.Fatalf("Failed to initialize communicator: %v", err)
 	}
 
-	expected := make([]float64, numDevices)
+	defer coordinatorClient.CommDestroy(ctx, &pb.CommDestroyRequest{CommId: commInitResponse.CommId})
+
+	expected := make([]float64, dataLength)
 	memAddrs := make(map[uint32]*pb.MemAddr)
 	for i, data := range commInitResponse.Devices {
 		memAddrs[uint32(i)] = &pb.MemAddr{
@@ -38,7 +39,7 @@ func AllReduceRingBasic(t *testing.T, coordinatorAddr string, numDevices uint32,
 		}
 
 		var bytes []byte
-		for j := 0; j < int(numDevices); j++ {
+		for j := 0; j < int(dataLength); j++ {
 			if i == 0 {
 				expected[j] = float64(i + j)
 			} else {
@@ -65,7 +66,7 @@ func AllReduceRingBasic(t *testing.T, coordinatorAddr string, numDevices uint32,
 		ctx,
 		&pb.AllReduceRingRequest{
 			CommId:   commInitResponse.CommId,
-			Count:    uint64(numDevices),
+			Count:    uint64(dataLength),
 			Op:       op,
 			MemAddrs: memAddrs,
 		},
@@ -78,7 +79,7 @@ func AllReduceRingBasic(t *testing.T, coordinatorAddr string, numDevices uint32,
 	res, err := coordinatorClient.Memcpy(ctx, &pb.MemcpyRequest{
 		Either: &pb.MemcpyRequest_DeviceToHost{
 			DeviceToHost: &pb.MemcpyDeviceToHostRequest{
-				NumBytes:    uint64(numDevices) * wordSize,
+				NumBytes:    uint64(dataLength) * wordSize,
 				SrcDeviceId: &pb.DeviceId{Value: commInitResponse.Devices[0].DeviceId.Value},
 				SrcMemAddr:  &pb.MemAddr{Value: commInitResponse.Devices[0].MinMemAddr.Value},
 			},
@@ -89,20 +90,20 @@ func AllReduceRingBasic(t *testing.T, coordinatorAddr string, numDevices uint32,
 	}
 
 	var got []float64
-	for i := 0; i < int(numDevices); i++ {
+	for i := 0; i < int(dataLength); i++ {
 		f := res.GetDeviceToHost().DstData[uint64(i)*wordSize : (uint64(i)*wordSize)+wordSize]
 		got = append(got, util.BytesToFloat64(f))
 	}
 
 	const tolerance = 1e-9
-	for i := 0; i < int(numDevices); i++ {
+	for i := 0; i < int(dataLength); i++ {
 		if math.Abs(expected[i]-got[i]) > tolerance {
 			s := "got:"
-			for j := 0; j < int(numDevices); j++ {
+			for j := 0; j < int(dataLength); j++ {
 				s += fmt.Sprintf("%v ", got[i])
 			}
 			s += "\nexpected:"
-			for i := 0; i < int(numDevices); i++ {
+			for i := 0; i < int(dataLength); i++ {
 				s += fmt.Sprintf("%v ", expected[i])
 			}
 			t.Fatalf(s + "\n")
@@ -111,7 +112,32 @@ func AllReduceRingBasic(t *testing.T, coordinatorAddr string, numDevices uint32,
 }
 
 func TestAllReduceRingBasic(t *testing.T) {
-	AllReduceRingBasic(t, "127.0.0.1:6000", 3, pb.ReduceOp_SUM, func(a float64, b float64) float64 {
+	coordinatorAddr := "127.0.0.1:6000"
+	coordinatorConn, err := grpc.Dial(coordinatorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("Failed to connect to GPUCoordinator: %v", err)
+	}
+	defer coordinatorConn.Close()
+	coordinatorClient := pb.NewGPUCoordinatorClient(coordinatorConn)
+
+	AllReduceRingBasic(t, coordinatorClient, 3, 3, pb.ReduceOp_SUM, func(a float64, b float64) float64 {
 		return a + b
+	})
+	AllReduceRingBasic(t, coordinatorClient, 3, 3, pb.ReduceOp_PROD, func(a float64, b float64) float64 {
+		return a * b
+	})
+	AllReduceRingBasic(t, coordinatorClient, 3, 3, pb.ReduceOp_MAX, func(a float64, b float64) float64 {
+		if a < b {
+			return b
+		} else {
+			return a
+		}
+	})
+	AllReduceRingBasic(t, coordinatorClient, 3, 3, pb.ReduceOp_MIN, func(a float64, b float64) float64 {
+		if a < b {
+			return a
+		} else {
+			return b
+		}
 	})
 }
