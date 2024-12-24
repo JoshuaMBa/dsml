@@ -148,6 +148,13 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 	ctx context.Context,
 	req *pb.SetupCommunicationRequest,
 ) (*pb.SetupCommunicationResponse, error) {
+	shouldError := gpu.fi.MaybeInject()
+	if shouldError {
+		return nil, status.Error(
+			codes.Internal,
+			"GPU: (injected) internal error!",
+		)
+	}
 	// you should not be allowed to call this more than once
 	gpu.mu.Lock()
 	defer gpu.mu.Unlock()
@@ -212,6 +219,13 @@ func (gpu *GPUDeviceServer) BeginSend(
 	ctx context.Context,
 	req *pb.BeginSendRequest,
 ) (*pb.BeginSendResponse, error) {
+	shouldError := gpu.fi.MaybeInject()
+	if shouldError {
+		return nil, status.Error(
+			codes.Internal,
+			"GPU: (injected) internal error!",
+		)
+	}
 	// get current stream id and increment
 	// kick off goroutine actually sending data using streamsend
 
@@ -244,6 +258,13 @@ func (gpu *GPUDeviceServer) BeginReceive(
 	ctx context.Context,
 	req *pb.BeginReceiveRequest,
 ) (*pb.BeginReceiveResponse, error) {
+	shouldError := gpu.fi.MaybeInject()
+	if shouldError {
+		return nil, status.Error(
+			codes.Internal,
+			"GPU: (injected) internal error!",
+		)
+	}
 
 	log.Printf("recv req: %v", req)
 
@@ -290,6 +311,14 @@ func (gpu *GPUDeviceServer) BeginReceive(
 func (gpu *GPUDeviceServer) StreamSend(
 	stream pb.GPUDevice_StreamSendServer,
 ) error {
+	shouldError := gpu.fi.MaybeInject()
+	if shouldError {
+		return status.Error(
+			codes.Internal,
+			"GPU: (injected) internal error!",
+		)
+	}
+
 	var srcRank uint32 = 0
 	var streamId uint64 = 0
 
@@ -347,6 +376,13 @@ func (gpu *GPUDeviceServer) GetStreamStatus(
 	ctx context.Context,
 	req *pb.GetStreamStatusRequest,
 ) (*pb.GetStreamStatusResponse, error) {
+	shouldError := gpu.fi.MaybeInject()
+	if shouldError {
+		return nil, status.Error(
+			codes.Internal,
+			"GPU: (injected) internal error!",
+		)
+	}
 
 	// protobuf defaults again...
 	var streamId uint64 = 0
@@ -439,6 +475,13 @@ func (gpu *GPUDeviceServer) Memcpy(
 	ctx context.Context,
 	req *pb.MemcpyRequest,
 ) (*pb.MemcpyResponse, error) {
+	shouldError := gpu.fi.MaybeInject()
+	if shouldError {
+		return nil, status.Error(
+			codes.Internal,
+			"GPU: (injected) internal error!",
+		)
+	}
 	gpu.mu.Lock()
 	defer gpu.mu.Unlock()
 
@@ -492,6 +535,16 @@ func (gpu *GPUDeviceServer) deviceToHost(req *pb.MemcpyDeviceToHostRequest) ([]b
 	}
 
 	return gpu.memory.Read(start, req.NumBytes)
+}
+
+func (gpu *GPUDeviceServer) ResetGpu(
+	ctx context.Context,
+	req *pb.ResetGpuRequest,
+) (*pb.ResetGpuResponse, error) {
+
+	// remove all saved state!
+
+	return &pb.ResetGpuResponse{Success: true}, nil
 }
 
 func reduce(op pb.ReduceOp, srcData, reqData []byte) []byte {
