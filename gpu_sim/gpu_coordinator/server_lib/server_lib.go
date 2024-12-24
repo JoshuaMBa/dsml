@@ -399,6 +399,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				}
 
 				// Send stream id to gpu of rank `next` to initiate communication
+				log.Printf("gpu %v sending streamId %v to gpu %v", rank, sendRes.StreamId.Value, next)
 				recvStreamIds[next] <- sendRes.StreamId.Value
 
 				// Get stream id to receive from gpu of rank `prev`
@@ -449,13 +450,17 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 					log.Printf("GPUCoordinator: waitForStream: failed receive (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, prev, rank, recvStreamId)
 					failure.Store(true)
 					return
+				} else {
+					log.Printf("GPUCoordinator: waitForStream: successful receive (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, prev, rank, recvStreamId)
 				}
 
 				srcRank = rank
 				if err := server.waitForStream(ctx, sendRes.StreamId.Value, srcRank, me); err != nil {
-					log.Printf("GPUCoordinator: waitForStream: failed send (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, rank, next, recvStreamId)
+					log.Printf("GPUCoordinator: waitForStream: failed send (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, rank, next, sendRes.StreamId.Value)
 					failure.Store(true)
 					return
+				} else {
+					log.Printf("GPUCoordinator: waitForStream: successful send (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, prev, rank, sendRes.StreamId.Value)
 				}
 
 				// Send most recently received buffer in next iteration
