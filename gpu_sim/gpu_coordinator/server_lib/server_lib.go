@@ -330,8 +330,8 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 
 	// Channels through which stream ids for sent data are communicated
 	recvStreamIds := make([]chan uint64, comm.nGpus)
-	for _ = range comm.nGpus {
-		recvStreamIds = append(recvStreamIds, make(chan uint64, comm.nGpus))
+	for i := uint64(0); i < comm.nGpus; i++ {
+		recvStreamIds[i] = make(chan uint64, comm.nGpus)
 	}
 
 	// Metadata on blocks being passed around ring
@@ -347,7 +347,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 		go func(rank uint32) {
 			defer wg.Done()
 
-			log.Printf("GPU of rank %v starting computation\n", rank)
+			log.Printf("GPU of rank %v entered ring\n", rank)
 
 			var prev, next uint32
 			var sendBlockIndex, recvBlockIndex uint64
@@ -365,7 +365,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 			// Share-reduce phase
 			for i := uint32(0); i < uint32(blocks); i++ {
 				// Identify current subvector to be sent to `next`
-				sendStartAddr := req.MemAddrs[rank].Value + (sendBlockIndex * blockSize)
+				sendBuffAddr := req.MemAddrs[rank].Value + (sendBlockIndex * blockSize)
 				numBytes := wordSize * blockSize
 
 				// In event that comm.nGpus does not divide req.Count, add extra values to
@@ -374,12 +374,14 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 					numBytes += (wordSize * (req.Count % comm.nGpus))
 				}
 
+				log.Printf("gpu %v sending %v bytes of data from addr %v + %v to gpu %v\n", rank, numBytes, sendBuffAddr, (sendBlockIndex * blockSize), next)
+
 				// Perform non-blocking send of data to next gpu
 				sendRes, _ := me.BeginSend(
 					ctx,
 					&pb.BeginSendRequest{
 						SendBuffAddr: &pb.MemAddr{
-							Value: sendStartAddr,
+							Value: sendBuffAddr,
 						},
 						NumBytes: numBytes,
 						DstRank: &pb.Rank{
@@ -412,6 +414,8 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				} else {
 					op = req.Op
 				}
+
+				log.Printf("gpu %v receiving %v bytes of data into addr %v + %v from gpu %v\n", rank, numBytes, recvBuffAddr, (recvBlockIndex * blockSize), prev)
 
 				// Perform non-blocking receive of data from previous GPU
 				recvRes, _ := me.BeginReceive(
@@ -462,7 +466,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 			// Share-only phase
 			for i := uint32(0); i < uint32(blocks); i++ {
 				// Identify current subvector to be sent to `next`
-				sendStartAddr := req.MemAddrs[rank].Value + (sendBlockIndex * blockSize)
+				sendBuffAddr := req.MemAddrs[rank].Value + (sendBlockIndex * blockSize)
 				numBytes := wordSize * blockSize
 
 				// In event that comm.nGpus does not divide req.Count, add extra values to
@@ -471,12 +475,14 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 					numBytes += (wordSize * (req.Count % comm.nGpus))
 				}
 
+				log.Printf("gpu %v sending %v bytes of data from addr %v + %v to gpu %v\n", rank, numBytes, sendBuffAddr, (sendBlockIndex * blockSize), next)
+
 				// Perform non-blocking send of data to next gpu
 				sendRes, _ := me.BeginSend(
 					ctx,
 					&pb.BeginSendRequest{
 						SendBuffAddr: &pb.MemAddr{
-							Value: sendStartAddr,
+							Value: sendBuffAddr,
 						},
 						NumBytes: numBytes,
 						DstRank: &pb.Rank{
@@ -501,6 +507,8 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				if recvBlockIndex == (blocks - 1) {
 					numBytes += (wordSize * (req.Count % comm.nGpus))
 				}
+
+				log.Printf("gpu %v receiving %v bytes of data into addr %v + %v from gpu %v\n", rank, numBytes, recvBuffAddr, (recvBlockIndex * blockSize), prev)
 
 				// Perform non-blocking receive of data from previous GPU
 				recvRes, _ := me.BeginReceive(
