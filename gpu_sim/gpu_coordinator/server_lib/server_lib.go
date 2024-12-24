@@ -379,9 +379,8 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 					numBytes += (wordSize * (req.Count % comm.nGpus))
 				}
 
-				log.Printf("gpu %v sending %v bytes of data from addr range [%v, %v) to gpu %v\n", rank, numBytes, sendBuffAddr, sendBuffAddr+(sendBlockIndex*blockBytes), next)
-
 				// Perform non-blocking send of data to next gpu
+				log.Printf("gpu %v sending %v bytes of data from addr range [%v, %v) to gpu %v\n", rank, numBytes, sendBuffAddr, sendBuffAddr+(sendBlockIndex*blockBytes), next)
 				sendRes, _ := me.BeginSend(
 					ctx,
 					&pb.BeginSendRequest{
@@ -420,9 +419,8 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 					op = req.Op
 				}
 
-				log.Printf("gpu %v receiving %v bytes of data into addr range [%v, %v) from gpu %v\n", rank, numBytes, recvBuffAddr, recvBuffAddr+(recvBlockIndex*blockBytes), prev)
-
 				// Perform non-blocking receive of data from previous GPU
+				log.Printf("gpu %v receiving %v bytes of data into addr range [%v, %v) from gpu %v\n", rank, numBytes, recvBuffAddr, recvBuffAddr+(recvBlockIndex*blockBytes), prev)
 				recvRes, _ := me.BeginReceive(
 					ctx,
 					&pb.BeginReceiveRequest{
@@ -453,7 +451,6 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				} else {
 					log.Printf("GPUCoordinator: waitForStream: successful receive (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, srcRank, rank, recvStreamId)
 				}
-
 				srcRank = rank
 				if err := server.waitForStream(ctx, sendRes.StreamId.Value, srcRank, me); err != nil {
 					log.Printf("GPUCoordinator: waitForStream: failed send (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, srcRank, next, sendRes.StreamId.Value)
@@ -470,9 +467,13 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				} else {
 					recvBlockIndex--
 				}
+
+				if failure.Load() == true {
+					return
+				}
 			}
 
-			// Share-only phase
+			// Share-only phase (no reduction)
 			for i := uint32(0); i < uint32(blocks); i++ {
 				// Identify current subvector to be sent to `next`
 				sendBuffAddr := req.MemAddrs[rank].Value + (sendBlockIndex * blockBytes)
@@ -484,9 +485,8 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 					numBytes += (wordSize * (req.Count % comm.nGpus))
 				}
 
-				log.Printf("gpu %v sending %v bytes of data from addr range [%v, %v) to gpu %v\n", rank, numBytes, sendBuffAddr, sendBuffAddr+(sendBlockIndex*blockBytes), next)
-
 				// Perform non-blocking send of data to next gpu
+				log.Printf("gpu %v sending %v bytes of data from addr range [%v, %v) to gpu %v\n", rank, numBytes, sendBuffAddr, sendBuffAddr+(sendBlockIndex*blockBytes), next)
 				sendRes, _ := me.BeginSend(
 					ctx,
 					&pb.BeginSendRequest{
@@ -517,9 +517,8 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 					numBytes += (wordSize * (req.Count % comm.nGpus))
 				}
 
-				log.Printf("gpu %v receiving %v bytes of data into addr range [%v, %v) from gpu %v\n", rank, numBytes, recvBuffAddr, recvBuffAddr+(recvBlockIndex*blockBytes), prev)
-
 				// Perform non-blocking receive of data from previous GPU
+				log.Printf("gpu %v receiving %v bytes of data into addr range [%v, %v) from gpu %v\n", rank, numBytes, recvBuffAddr, recvBuffAddr+(recvBlockIndex*blockBytes), prev)
 				recvRes, _ := me.BeginReceive(
 					ctx,
 					&pb.BeginReceiveRequest{
@@ -550,7 +549,6 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				} else {
 					log.Printf("GPUCoordinator: waitForStream: successful receive (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, srcRank, rank, recvStreamId)
 				}
-
 				srcRank = rank
 				if err := server.waitForStream(ctx, sendRes.StreamId.Value, srcRank, me); err != nil {
 					log.Printf("GPUCoordinator: waitForStream: failed send (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, srcRank, next, sendRes.StreamId.Value)
@@ -566,6 +564,10 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 					recvBlockIndex = comm.nGpus - 1
 				} else {
 					recvBlockIndex--
+				}
+
+				if failure.Load() == true {
+					return
 				}
 			}
 		}(rank)
