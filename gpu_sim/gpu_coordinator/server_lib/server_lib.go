@@ -380,7 +380,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				}
 
 				// Perform non-blocking send of data to next gpu
-				log.Printf("gpu %v sending %v bytes of data from addr range [%v, %v) to gpu %v\n", rank, numBytes, sendBuffAddr, sendBuffAddr+(sendBlockIndex*blockBytes), next)
+				log.Printf("gpu %v sending %v bytes of data from addr range [%v, %v) to gpu %v\n", rank, numBytes, sendBuffAddr, sendBuffAddr+numBytes, next)
 				sendRes, _ := me.BeginSend(
 					ctx,
 					&pb.BeginSendRequest{
@@ -420,7 +420,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				}
 
 				// Perform non-blocking receive of data from previous GPU
-				log.Printf("gpu %v receiving %v bytes of data into addr range [%v, %v) from gpu %v\n", rank, numBytes, recvBuffAddr, recvBuffAddr+(recvBlockIndex*blockBytes), prev)
+				log.Printf("gpu %v receiving %v bytes of data into addr range [%v, %v) from gpu %v\n", rank, numBytes, recvBuffAddr, recvBuffAddr+numBytes, prev)
 				recvRes, _ := me.BeginReceive(
 					ctx,
 					&pb.BeginReceiveRequest{
@@ -486,7 +486,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				}
 
 				// Perform non-blocking send of data to next gpu
-				log.Printf("gpu %v sending %v bytes of data from addr range [%v, %v) to gpu %v\n", rank, numBytes, sendBuffAddr, sendBuffAddr+(sendBlockIndex*blockBytes), next)
+				log.Printf("gpu %v sending %v bytes of data from addr range [%v, %v) to gpu %v\n", rank, numBytes, sendBuffAddr, sendBuffAddr+numBytes, next)
 				sendRes, _ := me.BeginSend(
 					ctx,
 					&pb.BeginSendRequest{
@@ -518,7 +518,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				}
 
 				// Perform non-blocking receive of data from previous GPU
-				log.Printf("gpu %v receiving %v bytes of data into addr range [%v, %v) from gpu %v\n", rank, numBytes, recvBuffAddr, recvBuffAddr+(recvBlockIndex*blockBytes), prev)
+				log.Printf("gpu %v receiving %v bytes of data into addr range [%v, %v) from gpu %v\n", rank, numBytes, recvBuffAddr, recvBuffAddr+numBytes, prev)
 				recvRes, _ := me.BeginReceive(
 					ctx,
 					&pb.BeginReceiveRequest{
