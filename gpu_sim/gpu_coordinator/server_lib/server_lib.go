@@ -471,6 +471,104 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 					recvBlockIndex--
 				}
 			}
+
+			// Share-only phase (no reduction)
+			for i := uint32(0); i < uint32(blocks); i++ {
+				// Identify current subvector to be sent to `next`
+				sendBuffAddr := req.MemAddrs[rank].Value + (sendBlockIndex * blockSize)
+				numBytes := wordSize * blockSize
+
+				// In event that comm.nGpus does not divide req.Count, add extra values to
+				// last block
+				if sendBlockIndex == (blocks - 1) {
+					numBytes += (wordSize * (req.Count % comm.nGpus))
+				}
+
+				log.Printf("gpu %v sending %v bytes of data from addr %v + %v to gpu %v\n", rank, numBytes, sendBuffAddr, (sendBlockIndex * blockSize), next)
+
+				// Perform non-blocking send of data to next gpu
+				sendRes, _ := me.BeginSend(
+					ctx,
+					&pb.BeginSendRequest{
+						SendBuffAddr: &pb.MemAddr{
+							Value: sendBuffAddr,
+						},
+						NumBytes: numBytes,
+						DstRank: &pb.Rank{
+							Value: uint32(next),
+						},
+					},
+				)
+				if sendRes.Initiated == false {
+					failure.Store(true)
+					return
+				}
+
+				// Send stream id to gpu of rank `next` to initiate communication
+				log.Printf("gpu %v sending streamId %v to gpu %v", rank, sendRes.StreamId.Value, next)
+				recvStreamIds[next] <- sendRes.StreamId.Value
+
+				// Get stream id to receive from gpu of rank `prev`
+				recvStreamId := <-recvStreamIds[rank]
+
+				// Identify next subvector to be received from `prev`
+				recvBuffAddr := req.MemAddrs[rank].Value + (recvBlockIndex * blockSize)
+				numBytes = wordSize * blockSize
+				if recvBlockIndex == (blocks - 1) {
+					numBytes += (wordSize * (req.Count % comm.nGpus))
+				}
+
+				log.Printf("gpu %v receiving %v bytes of data into addr %v + %v from gpu %v\n", rank, numBytes, recvBuffAddr, (recvBlockIndex * blockSize), prev)
+
+				// Perform non-blocking receive of data from previous GPU
+				recvRes, _ := me.BeginReceive(
+					ctx,
+					&pb.BeginReceiveRequest{
+						StreamId: &pb.StreamId{
+							Value: recvStreamId,
+						},
+						RecvBuffAddr: &pb.MemAddr{
+							Value: recvBuffAddr,
+						},
+						NumBytes: numBytes,
+						SrcRank: &pb.Rank{
+							Value: uint32(prev),
+						},
+						Op: pb.ReduceOp_NIL,
+					},
+				)
+				if recvRes.Initiated == false {
+					failure.Store(true)
+					return
+				}
+
+				// Wait for current iteration of ring reduction to complete
+				srcRank := prev
+				if err := server.waitForStream(ctx, recvStreamId, srcRank, me); err != nil {
+					log.Printf("GPUCoordinator: waitForStream: failed receive (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, srcRank, rank, recvStreamId)
+					failure.Store(true)
+					return
+				} else {
+					log.Printf("GPUCoordinator: waitForStream: successful receive (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, srcRank, rank, recvStreamId)
+				}
+
+				srcRank = rank
+				if err := server.waitForStream(ctx, sendRes.StreamId.Value, srcRank, me); err != nil {
+					log.Printf("GPUCoordinator: waitForStream: failed send (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, srcRank, next, sendRes.StreamId.Value)
+					failure.Store(true)
+					return
+				} else {
+					log.Printf("GPUCoordinator: waitForStream: successful send (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, srcRank, next, sendRes.StreamId.Value)
+				}
+
+				// Send most recently received buffer in next iteration
+				sendBlockIndex = recvBlockIndex
+				if recvBlockIndex == 0 {
+					recvBlockIndex = comm.nGpus - 1
+				} else {
+					recvBlockIndex--
+				}
+			}
 		}(rank)
 	}
 
