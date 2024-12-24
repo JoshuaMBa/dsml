@@ -246,6 +246,7 @@ func (server *GPUCoordinatorServer) GroupStart(
 	defer server.mu.Unlock()
 	comm := server.comms[req.CommId]
 	comm.grouped = true
+	comm.status = pb.Status_IN_PROGRESS
 	server.comms[req.CommId] = comm
 	return &pb.GroupStartResponse{
 		Success: true,
@@ -264,6 +265,11 @@ func (server *GPUCoordinatorServer) GroupEnd(
 
 	// Now we need to iterate through comm.group and execute each operation
 
+	server.mu.Lock()
+	comm = server.comms[req.CommId]
+	comm.status = pb.Status_SUCCESS
+	server.comms[req.CommId] = comm
+	server.mu.Unlock()
 	return &pb.GroupEndResponse{
 		Success: true,
 	}, nil
@@ -307,10 +313,6 @@ func (server *GPUCoordinatorServer) waitForStream(
 			}
 		}
 	}
-}
-
-func (server *GPUCoordinatorServer) rebootCommunicator(commId uint64) {
-	// TODO: Implement restarting the communicator (i.e. close all current streams)
 }
 
 func (server *GPUCoordinatorServer) AllReduceRing(
@@ -575,7 +577,13 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 
 	wg.Wait()
 	if failure.Load() == true {
-		server.rebootCommunicator(req.CommId)
+		for _, conn := range comm.connections {
+			gpu := pb.NewGPUDeviceClient(conn)
+			gpu.ResetGpu(ctx, &pb.ResetGpuRequest{})
+		}
+		comm.status = pb.Status_FAILED
+		server.comms[req.CommId] = comm
+
 		return &pb.AllReduceRingResponse{
 			Success: false,
 		}, status.Errorf(codes.Unknown, "AllReduceRing: ring crash: commId: %v", req.CommId)
