@@ -92,9 +92,14 @@ type StreamSrcInfo struct {
 	DstRank      uint32
 }
 
+type StreamDstInfo struct {
+	dstAddr uint64
+	op      pb.ReduceOp
+}
+
 type StreamDstMonitor struct {
 	cond sync.Cond
-	info map[uint64]uint64 // maps streamid->dstaddr (for a given rank only)
+	info map[uint64]StreamDstInfo // maps streamid->(dstaddr, op) (for a given rank only)
 }
 
 func MakeGPUDeviceServer(
@@ -177,7 +182,7 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 	for i := range gpu.streamDst {
 		gpu.streamDst[i] = StreamDstMonitor{
 			cond: *sync.NewCond(&sync.Mutex{}),
-			info: make(map[uint64]uint64),
+			info: make(map[uint64]StreamDstInfo),
 		}
 	}
 
@@ -266,7 +271,7 @@ func (gpu *GPUDeviceServer) BeginReceive(
 	defer gpu.streamDst[srcRank].cond.L.Unlock()
 
 	// assign destination info
-	gpu.streamDst[srcRank].info[streamId] = req.RecvBuffAddr.Value
+	gpu.streamDst[srcRank].info[streamId] = StreamDstInfo{dstAddr: req.RecvBuffAddr.Value, op: req.Op}
 
 	// update status
 	gpu.streamStatus[srcRank].Store(streamId, pb.Status_IN_PROGRESS)
@@ -326,9 +331,13 @@ func (gpu *GPUDeviceServer) StreamSend(
 			_, exists = gpu.streamDst[srcRank].info[streamId]
 		}
 		log.Printf("got recv for stream with streamId: %d, srcRank: %d", streamId, srcRank)
-		addr := gpu.streamDst[srcRank].info[streamId]
+		addr := gpu.streamDst[srcRank].info[streamId].dstAddr
+		op := gpu.streamDst[srcRank].info[streamId].op
 		gpu.streamDst[srcRank].cond.L.Unlock() // technically not thread safe
-		gpu.memory.Write(addr, req.Data)
+
+		srcData, _ := gpu.memory.Read(addr, uint64(len(req.Data)))
+
+		gpu.memory.Write(addr, reduce(op, srcData, req.Data))
 	}
 }
 
@@ -479,4 +488,31 @@ func (gpu *GPUDeviceServer) deviceToHost(req *pb.MemcpyDeviceToHostRequest) ([]b
 	}
 
 	return gpu.memory.Read(start, req.NumBytes)
+}
+
+func reduce(op pb.ReduceOp, srcData, reqData []byte) []byte {
+	// both are disposable tbh
+	x, y := BytesToFloat64(srcData), BytesToFloat64(reqData)
+	switch op {
+	case pb.ReduceOp_NIL:
+		return Float64ToBytes(y)
+	case pb.ReduceOp_SUM:
+		return Float64ToBytes(x + y)
+	case pb.ReduceOp_PROD:
+		return Float64ToBytes(x * y)
+	case pb.ReduceOp_MIN:
+		if x < y {
+			return Float64ToBytes(x)
+		} else {
+			return Float64ToBytes(y)
+		}
+	case pb.ReduceOp_MAX:
+		if x > y {
+			return Float64ToBytes(x)
+		} else {
+			return Float64ToBytes(y)
+		}
+	default:
+		return Float64ToBytes(0)
+	}
 }
