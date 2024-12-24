@@ -42,6 +42,12 @@ kill-coordinator:
 		echo "No coordinator servers running"; \
 	fi
 
+test-devices: start-devices
+	go test -v gpu_sim/tests/device_test.go | tee logs/device_test.log
+
+test-coordinator: start-devices start-coordinator
+	go test -v gpu_sim/tests/coordinator_test.go | tee logs/coordinator_test.log
+
 clean-all: kill-coordinator kill-devices
 	rm -rf logs
 	rm device_11_memory
