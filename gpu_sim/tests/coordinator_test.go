@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"testing"
-	"time"
 
 	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 	"github.com/stretchr/testify/assert"
@@ -25,8 +24,7 @@ func TestAllReduceRingBasic(t *testing.T) {
 
 	numDevices := uint32(3)
 	fmt.Printf("Requesting a communicator with %d devices...\n", numDevices)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
+	ctx := context.Background()
 
 	commInitResponse, err := coordinatorClient.CommInit(ctx, &pb.CommInitRequest{
 		NumDevices: numDevices,

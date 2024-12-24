@@ -447,20 +447,20 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				// Wait for current iteration of ring reduction to complete
 				srcRank := prev
 				if err := server.waitForStream(ctx, recvStreamId, srcRank, me); err != nil {
-					log.Printf("GPUCoordinator: waitForStream: failed receive (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, prev, rank, recvStreamId)
+					log.Printf("GPUCoordinator: waitForStream: failed receive (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, srcRank, rank, recvStreamId)
 					failure.Store(true)
 					return
 				} else {
-					log.Printf("GPUCoordinator: waitForStream: successful receive (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, prev, rank, recvStreamId)
+					log.Printf("GPUCoordinator: waitForStream: successful receive (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, srcRank, rank, recvStreamId)
 				}
 
 				srcRank = rank
 				if err := server.waitForStream(ctx, sendRes.StreamId.Value, srcRank, me); err != nil {
-					log.Printf("GPUCoordinator: waitForStream: failed send (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, rank, next, sendRes.StreamId.Value)
+					log.Printf("GPUCoordinator: waitForStream: failed send (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, srcRank, next, sendRes.StreamId.Value)
 					failure.Store(true)
 					return
 				} else {
-					log.Printf("GPUCoordinator: waitForStream: successful send (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, prev, rank, sendRes.StreamId.Value)
+					log.Printf("GPUCoordinator: waitForStream: successful send (commId: %v, srcRank: %v, dstRank: %v, streamId: %v)", req.CommId, srcRank, next, sendRes.StreamId.Value)
 				}
 
 				// Send most recently received buffer in next iteration
