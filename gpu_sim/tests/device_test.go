@@ -107,4 +107,6 @@ func TestSendRecvBasic(t *testing.T) {
 	// assert.Equal(t, pb.Status_IN_PROGRESS, status_response.Status)
 	assert.Equal(t, nil, err)
 	t.Logf("status resp: %v", status_response)
+
+	gpus[0].ResetGpu(context.Background(), &pb.ResetGpuRequest{})
 }

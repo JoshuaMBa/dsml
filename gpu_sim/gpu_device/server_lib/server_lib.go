@@ -57,7 +57,6 @@ type GPUDeviceServer struct {
 	////////////////////////////
 
 	memory MemorySpace
-	mu     sync.Mutex // thread safe memory, might be unneeded?
 
 	////////////////////////////
 	// device info (i don't anticipate ever using this, maybe it goes into options?)
@@ -75,6 +74,7 @@ type GPUDeviceServer struct {
 	////////////////////////////
 	// gpu communications, implementation detail
 	////////////////////////////
+	resetLock sync.RWMutex // allows for reset
 
 	conns []*grpc.ClientConn
 	peers []pb.GPUDeviceClient // rpc handles for other gpus
@@ -82,8 +82,8 @@ type GPUDeviceServer struct {
 	streamId  atomic.Uint64 // my streamId when sending to others
 	streamSrc chan StreamSrcInfo
 
-	streamDst    []StreamDstMonitor // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
-	streamStatus []sync.Map         // lookup is srcRank->streamid, tells status of streams being received, for streams that this gpu is sending, lookup stats[gpu.rank]
+	streamDst    []*StreamDstMonitor // where streams i am receiving should go (lookup is rank->streamId->memAddr (combine into one struct, streamHandler?)
+	streamStatus []*sync.Map         // lookup is srcRank->streamid, tells status of streams being received, for streams that this gpu is sending, lookup stats[gpu.rank]
 }
 
 type StreamSrcInfo struct {
@@ -123,7 +123,7 @@ func MakeGPUDeviceServer(
 	mem, _ := NewDeviceMemory(fmt.Sprintf("device_%d_memory", options.DeviceId))
 	mem.Allocate(options.MemoryNeeded)
 
-	return &GPUDeviceServer{
+	gpu := &GPUDeviceServer{
 		options:    options,
 		fi:         fi,
 		deviceId:   options.DeviceId,
@@ -133,7 +133,11 @@ func MakeGPUDeviceServer(
 		streamSrc:  make(chan StreamSrcInfo, 16),
 		// we don't do streamdst until we have all the ranks?
 		// ditto for streamstatus
-	}, nil
+	}
+
+	go gpu.StreamSendDispatch()
+
+	return gpu, nil
 }
 
 func MockGPUDeviceServer(deviceId, minMemAddr, maxMemAddr uint64, rankToAddress map[uint32]string) *GPUDeviceServer {
@@ -148,6 +152,8 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 	ctx context.Context,
 	req *pb.SetupCommunicationRequest,
 ) (*pb.SetupCommunicationResponse, error) {
+	gpu.resetLock.RLock()
+	defer gpu.resetLock.RUnlock()
 	shouldError := gpu.fi.MaybeInject()
 	if shouldError {
 		return nil, status.Error(
@@ -156,8 +162,6 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 		)
 	}
 	// you should not be allowed to call this more than once
-	gpu.mu.Lock()
-	defer gpu.mu.Unlock()
 	if req == nil || req.RankToAddress == nil {
 		return nil, status.Error(codes.InvalidArgument, "missing RankToAddress mappings")
 	}
@@ -186,16 +190,19 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 	}
 
 	// setup streamdst info
-	gpu.streamDst = make([]StreamDstMonitor, gpu.nRanks)
+	gpu.streamDst = make([]*StreamDstMonitor, gpu.nRanks)
 	for i := range gpu.streamDst {
-		gpu.streamDst[i] = StreamDstMonitor{
+		gpu.streamDst[i] = &StreamDstMonitor{
 			cond: *sync.NewCond(&sync.Mutex{}),
 			info: make(map[uint64]*StreamDstInfo),
 		}
 	}
 
 	// setup statuses
-	gpu.streamStatus = make([]sync.Map, gpu.nRanks)
+	gpu.streamStatus = make([]*sync.Map, gpu.nRanks)
+	for i := range gpu.streamStatus {
+		gpu.streamStatus[i] = &sync.Map{}
+	}
 
 	return &pb.SetupCommunicationResponse{
 		Success: true,
@@ -219,6 +226,8 @@ func (gpu *GPUDeviceServer) BeginSend(
 	ctx context.Context,
 	req *pb.BeginSendRequest,
 ) (*pb.BeginSendResponse, error) {
+	gpu.resetLock.RLock()
+	defer gpu.resetLock.RUnlock()
 	shouldError := gpu.fi.MaybeInject()
 	if shouldError {
 		return nil, status.Error(
@@ -258,6 +267,8 @@ func (gpu *GPUDeviceServer) BeginReceive(
 	ctx context.Context,
 	req *pb.BeginReceiveRequest,
 ) (*pb.BeginReceiveResponse, error) {
+	gpu.resetLock.RLock()
+	defer gpu.resetLock.RUnlock()
 	shouldError := gpu.fi.MaybeInject()
 	if shouldError {
 		return nil, status.Error(
@@ -311,6 +322,9 @@ func (gpu *GPUDeviceServer) BeginReceive(
 func (gpu *GPUDeviceServer) StreamSend(
 	stream pb.GPUDevice_StreamSendServer,
 ) error {
+	gpu.resetLock.RLock()
+	defer gpu.resetLock.RUnlock()
+
 	shouldError := gpu.fi.MaybeInject()
 	if shouldError {
 		return status.Error(
@@ -336,39 +350,40 @@ func (gpu *GPUDeviceServer) StreamSend(
 			}
 		}
 
-		if err == io.EOF {
+		if err == nil {
+			gpu.streamDst[srcRank].cond.L.Lock()
+			info, exists := gpu.streamDst[srcRank].info[streamId]
+			for !exists {
+				log.Printf("waiting on recv for stream with streamId: %d, srcRank: %d", streamId, srcRank)
+				log.Printf("info while waiting: %v (exists: %v)", gpu.streamDst[srcRank].info, exists)
+				gpu.streamDst[srcRank].cond.Wait()
+				info, exists = gpu.streamDst[srcRank].info[streamId]
+			}
+
+			log.Printf("got recv for stream with streamId: %d, srcRank: %d", streamId, srcRank)
+			addr := info.DstAddr
+			info.DstAddr += 8
+			op := gpu.streamDst[srcRank].info[streamId].op
+			gpu.streamDst[srcRank].cond.L.Unlock() // technically not thread safe
+
+			srcData, _ := gpu.memory.Read(addr, uint64(len(req.Data)))
+			gpu.memory.Write(addr, reduce(op, srcData, req.Data))
+
+		} else if err == io.EOF {
 			gpu.streamStatus[srcRank].Store(streamId, pb.Status_SUCCESS)
 
 			// End of stream, send response
 			response := &pb.StreamSendResponse{
 				Success: true,
 			}
-			log.Printf("End of stream")
+			log.Printf("End of stream with streamId %d, rank %d", streamId, srcRank)
 			return stream.SendAndClose(response)
-		}
-		if err != nil {
+
+		} else {
 			// Handle errors during streaming
 			gpu.streamStatus[srcRank].Store(streamId, pb.Status_FAILED)
 			return status.Errorf(codes.Internal, "failed to receive stream: %v", err)
 		}
-
-		gpu.streamDst[srcRank].cond.L.Lock()
-		_, exists := gpu.streamDst[srcRank].info[streamId]
-		for !exists {
-			log.Printf("waiting on recv for stream with streamId: %d, srcRank: %d", streamId, srcRank)
-			log.Printf("info while waiting: %v (exists: %v)", gpu.streamDst[srcRank].info, exists)
-			gpu.streamDst[srcRank].cond.Wait()
-			_, exists = gpu.streamDst[srcRank].info[streamId]
-		}
-		log.Printf("got recv for stream with streamId: %d, srcRank: %d", streamId, srcRank)
-		addr := gpu.streamDst[srcRank].info[streamId].DstAddr
-		gpu.streamDst[srcRank].info[streamId].DstAddr += 8
-		op := gpu.streamDst[srcRank].info[streamId].op
-		gpu.streamDst[srcRank].cond.L.Unlock() // technically not thread safe
-
-		srcData, _ := gpu.memory.Read(addr, uint64(len(req.Data)))
-		gpu.memory.Write(addr, reduce(op, srcData, req.Data))
-
 	}
 }
 
@@ -376,6 +391,8 @@ func (gpu *GPUDeviceServer) GetStreamStatus(
 	ctx context.Context,
 	req *pb.GetStreamStatusRequest,
 ) (*pb.GetStreamStatusResponse, error) {
+	gpu.resetLock.RLock()
+	defer gpu.resetLock.RUnlock()
 	shouldError := gpu.fi.MaybeInject()
 	if shouldError {
 		return nil, status.Error(
@@ -421,7 +438,7 @@ func (gpu *GPUDeviceServer) SetInjectionConfig(
 }
 
 func (gpu *GPUDeviceServer) StreamSendDispatch() {
-	fmt.Println("started streamsend thread")
+	log.Print("started streamsend dispatch with channel ", &gpu.streamSrc)
 	for streamInfo := range gpu.streamSrc {
 		streamId, srcAddr, numBytes, dstRank := streamInfo.StreamId, streamInfo.SendBuffAddr, streamInfo.NumBytes, streamInfo.DstRank
 		go gpu.StreamSendExecute(streamId, srcAddr, numBytes, dstRank)
@@ -478,6 +495,9 @@ func (gpu *GPUDeviceServer) Memcpy(
 	ctx context.Context,
 	req *pb.MemcpyRequest,
 ) (*pb.MemcpyResponse, error) {
+	gpu.resetLock.RLock()
+	defer gpu.resetLock.RUnlock()
+
 	shouldError := gpu.fi.MaybeInject()
 	if shouldError {
 		return nil, status.Error(
@@ -485,8 +505,6 @@ func (gpu *GPUDeviceServer) Memcpy(
 			"GPU: (injected) internal error!",
 		)
 	}
-	gpu.mu.Lock()
-	defer gpu.mu.Unlock()
 
 	switch x := req.Either.(type) {
 	case *pb.MemcpyRequest_HostToDevice:
@@ -544,8 +562,36 @@ func (gpu *GPUDeviceServer) ResetGpu(
 	ctx context.Context,
 	req *pb.ResetGpuRequest,
 ) (*pb.ResetGpuResponse, error) {
+	gpu.resetLock.Lock()
+	defer gpu.resetLock.Unlock()
 
-	// remove all saved state!
+	// clear everything in streamsend channel, reset dispatch thread
+	close(gpu.streamSrc)
+	gpu.streamSrc = make(chan StreamSrcInfo, 16)
+	go gpu.StreamSendDispatch()
+
+	for i := range gpu.nRanks {
+		if i == gpu.rank {
+			gpu.streamDst[i] = nil
+			gpu.streamStatus[i] = nil
+
+		} else {
+			// close connection to other GPU
+			gpu.conns[i].Close()
+
+			// nil out peer
+			gpu.peers[i] = nil
+
+			// wake threads waiting on streamDst and tell them to quit? -> no you're fine, coordinator should have sent recv calls
+			gpu.streamDst[i] = nil
+
+			// nil out streamStatus
+			gpu.streamStatus[i] = nil
+		}
+	}
+
+	// reset streamid
+	gpu.streamId.Store(0)
 
 	return &pb.ResetGpuResponse{Success: true}, nil
 }
