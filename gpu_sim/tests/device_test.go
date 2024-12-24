@@ -95,6 +95,7 @@ func TestSendRecvBasic(t *testing.T) {
 			NumBytes:     0x100,
 			StreamId:     sendResp.StreamId,
 			SrcRank:      &pb.Rank{Value: 1},
+			Op:           pb.ReduceOp_SUM,
 		})
 	assert.Equal(t, nil, err)
 
