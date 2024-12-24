@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func AllReduceRingBasic(
+func AllReduceRingNoFailureInjection(
 	t *testing.T,
 	coordinatorClient pb.GPUCoordinatorClient,
 	numDevices uint32,
@@ -111,33 +111,58 @@ func AllReduceRingBasic(
 	}
 }
 
-func TestAllReduceRingBasic(t *testing.T) {
+func connectToCoordinator(t *testing.T) *grpc.ClientConn {
 	coordinatorAddr := "127.0.0.1:6000"
 	coordinatorConn, err := grpc.Dial(coordinatorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("Failed to connect to GPUCoordinator: %v", err)
 	}
+	return coordinatorConn
+}
+
+func AllOperationsNoFailureInjection(
+	t *testing.T,
+	numDevices uint32,
+	dataLength uint32,
+) {
+	coordinatorConn := connectToCoordinator(t)
 	defer coordinatorConn.Close()
 	coordinatorClient := pb.NewGPUCoordinatorClient(coordinatorConn)
 
-	AllReduceRingBasic(t, coordinatorClient, 3, 3, pb.ReduceOp_SUM, func(a float64, b float64) float64 {
+	AllReduceRingNoFailureInjection(t, coordinatorClient, numDevices, dataLength, pb.ReduceOp_SUM, func(a float64, b float64) float64 {
 		return a + b
 	})
-	AllReduceRingBasic(t, coordinatorClient, 3, 3, pb.ReduceOp_PROD, func(a float64, b float64) float64 {
+	AllReduceRingNoFailureInjection(t, coordinatorClient, numDevices, dataLength, pb.ReduceOp_PROD, func(a float64, b float64) float64 {
 		return a * b
 	})
-	AllReduceRingBasic(t, coordinatorClient, 3, 3, pb.ReduceOp_MAX, func(a float64, b float64) float64 {
+	AllReduceRingNoFailureInjection(t, coordinatorClient, numDevices, dataLength, pb.ReduceOp_MAX, func(a float64, b float64) float64 {
 		if a < b {
 			return b
 		} else {
 			return a
 		}
 	})
-	AllReduceRingBasic(t, coordinatorClient, 3, 3, pb.ReduceOp_MIN, func(a float64, b float64) float64 {
+	AllReduceRingNoFailureInjection(t, coordinatorClient, numDevices, dataLength, pb.ReduceOp_MIN, func(a float64, b float64) float64 {
 		if a < b {
 			return a
 		} else {
 			return b
 		}
 	})
+}
+
+func TestAllReduceRingBasic(t *testing.T) {
+	// GPUs pass one float around the ring
+	numDevices := uint32(3)
+	dataLength := uint32(3)
+
+	AllOperationsNoFailureInjection(t, numDevices, dataLength)
+}
+
+func TestAllReduceRingCoprime(t *testing.T) {
+	// Number of devices does not divide the dataLength
+	numDevices := uint32(3)
+	dataLength := uint32(17)
+
+	AllOperationsNoFailureInjection(t, numDevices, dataLength)
 }
