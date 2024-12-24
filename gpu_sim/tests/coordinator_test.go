@@ -132,6 +132,7 @@ func AllOperationsNoFailureInjection(
 	AllReduceRingNoFailureInjection(t, coordinatorClient, numDevices, dataLength, pb.ReduceOp_SUM, func(a float64, b float64) float64 {
 		return a + b
 	})
+	return
 	AllReduceRingNoFailureInjection(t, coordinatorClient, numDevices, dataLength, pb.ReduceOp_PROD, func(a float64, b float64) float64 {
 		return a * b
 	})

@@ -49,6 +49,8 @@ service GPUDevice {
   rpc GetStreamStatus(GetStreamStatusRequest) returns (GetStreamStatusResponse) {}
 
   rpc Memcpy(MemcpyRequest) returns (MemcpyResponse) {}
+
+  rpc ResetGpu(ResetGpuRequest) returns (ResetGpuResponse) {}
 }
 
 message GetDeviceMetadataRequest {
@@ -106,6 +108,13 @@ enum Status {
 
 message GetStreamStatusResponse {
   Status status = 1;
+}
+
+message ResetGpuRequest {
+}
+
+message ResetGpuResponse {
+  bool success = 1;
 }
 
 // A service that simulates a coordinator that manages multiple GPU devices
