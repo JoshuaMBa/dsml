@@ -3,13 +3,14 @@ package server_lib
 import (
 	"context"
 	"fmt"
-	"github.com/JoshuaMBa/dsml/failure_injection"
-	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
-	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 	"io"
 	"log"
 	"sync"
 	"sync/atomic"
+
+	"github.com/JoshuaMBa/dsml/failure_injection"
+	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
+	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
 
 	// "google.golang.org/grpc"
 	"google.golang.org/grpc"
@@ -404,6 +405,7 @@ func (gpu *GPUDeviceServer) StreamSendExecute(
 		log.Printf("received error: %v", err)
 		log.Printf("GPUDevice failed to receive stream response from rank %d", dstRank)
 	}
+	gpu.streamStatus[gpu.rank].Store(streamId, pb.Status_SUCCESS)
 }
 
 func (gpu *GPUDeviceServer) GracefulStop() {
