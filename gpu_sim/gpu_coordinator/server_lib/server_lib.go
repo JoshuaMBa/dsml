@@ -342,6 +342,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 	blocks := comm.nGpus
 	blockSize := uint64(req.Count / comm.nGpus)
 	wordSize := uint64(8)
+	blockBytes := blockSize * wordSize
 
 	var wg sync.WaitGroup
 	var failure atomic.Bool
@@ -369,8 +370,8 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 			// Share-reduce phase
 			for i := uint32(0); i < uint32(blocks); i++ {
 				// Identify current subvector to be sent to `next`
-				sendBuffAddr := req.MemAddrs[rank].Value + (sendBlockIndex * blockSize)
-				numBytes := wordSize * blockSize
+				sendBuffAddr := req.MemAddrs[rank].Value + (sendBlockIndex * blockBytes)
+				numBytes := blockBytes
 
 				// In event that comm.nGpus does not divide req.Count, add extra values to
 				// last block
@@ -378,7 +379,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 					numBytes += (wordSize * (req.Count % comm.nGpus))
 				}
 
-				log.Printf("gpu %v sending %v bytes of data from addr %v + %v to gpu %v\n", rank, numBytes, sendBuffAddr, (sendBlockIndex * blockSize), next)
+				log.Printf("gpu %v sending %v bytes of data from addr range [%v, %v) to gpu %v\n", rank, numBytes, sendBuffAddr, sendBuffAddr+(sendBlockIndex*blockBytes), next)
 
 				// Perform non-blocking send of data to next gpu
 				sendRes, _ := me.BeginSend(
@@ -399,15 +400,14 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				}
 
 				// Send stream id to gpu of rank `next` to initiate communication
-				log.Printf("gpu %v sending streamId %v to gpu %v", rank, sendRes.StreamId.Value, next)
 				recvStreamIds[next] <- sendRes.StreamId.Value
 
 				// Get stream id to receive from gpu of rank `prev`
 				recvStreamId := <-recvStreamIds[rank]
 
 				// Identify next subvector to be received from `prev`
-				recvBuffAddr := req.MemAddrs[rank].Value + (recvBlockIndex * blockSize)
-				numBytes = wordSize * blockSize
+				recvBuffAddr := req.MemAddrs[rank].Value + (recvBlockIndex * blockBytes)
+				numBytes = blockBytes
 				if recvBlockIndex == (blocks - 1) {
 					numBytes += (wordSize * (req.Count % comm.nGpus))
 				}
@@ -420,7 +420,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 					op = req.Op
 				}
 
-				log.Printf("gpu %v receiving %v bytes of data into addr %v + %v from gpu %v\n", rank, numBytes, recvBuffAddr, (recvBlockIndex * blockSize), prev)
+				log.Printf("gpu %v receiving %v bytes of data into addr range [%v, %v) from gpu %v\n", rank, numBytes, recvBuffAddr, recvBuffAddr+(recvBlockIndex*blockBytes), prev)
 
 				// Perform non-blocking receive of data from previous GPU
 				recvRes, _ := me.BeginReceive(
@@ -472,11 +472,11 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				}
 			}
 
-			// Share-only phase (no reduction)
+			// Share-only phase
 			for i := uint32(0); i < uint32(blocks); i++ {
 				// Identify current subvector to be sent to `next`
-				sendBuffAddr := req.MemAddrs[rank].Value + (sendBlockIndex * blockSize)
-				numBytes := wordSize * blockSize
+				sendBuffAddr := req.MemAddrs[rank].Value + (sendBlockIndex * blockBytes)
+				numBytes := blockBytes
 
 				// In event that comm.nGpus does not divide req.Count, add extra values to
 				// last block
@@ -484,7 +484,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 					numBytes += (wordSize * (req.Count % comm.nGpus))
 				}
 
-				log.Printf("gpu %v sending %v bytes of data from addr %v + %v to gpu %v\n", rank, numBytes, sendBuffAddr, (sendBlockIndex * blockSize), next)
+				log.Printf("gpu %v sending %v bytes of data from addr range [%v, %v) to gpu %v\n", rank, numBytes, sendBuffAddr, sendBuffAddr+(sendBlockIndex*blockBytes), next)
 
 				// Perform non-blocking send of data to next gpu
 				sendRes, _ := me.BeginSend(
@@ -505,20 +505,19 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 				}
 
 				// Send stream id to gpu of rank `next` to initiate communication
-				log.Printf("gpu %v sending streamId %v to gpu %v", rank, sendRes.StreamId.Value, next)
 				recvStreamIds[next] <- sendRes.StreamId.Value
 
 				// Get stream id to receive from gpu of rank `prev`
 				recvStreamId := <-recvStreamIds[rank]
 
 				// Identify next subvector to be received from `prev`
-				recvBuffAddr := req.MemAddrs[rank].Value + (recvBlockIndex * blockSize)
-				numBytes = wordSize * blockSize
+				recvBuffAddr := req.MemAddrs[rank].Value + (recvBlockIndex * blockBytes)
+				numBytes = blockBytes
 				if recvBlockIndex == (blocks - 1) {
 					numBytes += (wordSize * (req.Count % comm.nGpus))
 				}
 
-				log.Printf("gpu %v receiving %v bytes of data into addr %v + %v from gpu %v\n", rank, numBytes, recvBuffAddr, (recvBlockIndex * blockSize), prev)
+				log.Printf("gpu %v receiving %v bytes of data into addr range [%v, %v) from gpu %v\n", rank, numBytes, recvBuffAddr, recvBuffAddr+(recvBlockIndex*blockBytes), prev)
 
 				// Perform non-blocking receive of data from previous GPU
 				recvRes, _ := me.BeginReceive(
