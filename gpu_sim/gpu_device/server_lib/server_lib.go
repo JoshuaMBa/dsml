@@ -94,13 +94,13 @@ type StreamSrcInfo struct {
 }
 
 type StreamDstInfo struct {
-	dstAddr uint64
+	DstAddr uint64
 	op      pb.ReduceOp
 }
 
 type StreamDstMonitor struct {
 	cond sync.Cond
-	info map[uint64]StreamDstInfo // maps streamid->(dstaddr, op) (for a given rank only)
+	info map[uint64]*StreamDstInfo // maps streamid->(dstaddr, op) (for a given rank only)
 }
 
 func MakeGPUDeviceServer(
@@ -190,7 +190,7 @@ func (gpu *GPUDeviceServer) SetupCommunication(
 	for i := range gpu.streamDst {
 		gpu.streamDst[i] = StreamDstMonitor{
 			cond: *sync.NewCond(&sync.Mutex{}),
-			info: make(map[uint64]StreamDstInfo),
+			info: make(map[uint64]*StreamDstInfo),
 		}
 	}
 
@@ -293,13 +293,13 @@ func (gpu *GPUDeviceServer) BeginReceive(
 	defer gpu.streamDst[srcRank].cond.L.Unlock()
 
 	// assign destination info
-	gpu.streamDst[srcRank].info[streamId] = StreamDstInfo{dstAddr: req.RecvBuffAddr.Value, op: req.Op}
+	gpu.streamDst[srcRank].info[streamId] = &StreamDstInfo{DstAddr: req.RecvBuffAddr.Value, op: req.Op}
 
 	// update status
 	gpu.streamStatus[srcRank].Store(streamId, pb.Status_IN_PROGRESS)
 
 	// wake up waiting threads
-	log.Printf("info is: %v", gpu.streamDst[srcRank].info)
+	log.Printf("info is: %v (len %d)", gpu.streamDst[srcRank].info, len(gpu.streamDst[srcRank].info))
 	log.Printf("notifying threads waiting on streamId: %d, srcRank: %d", streamId, srcRank)
 	gpu.streamDst[srcRank].cond.Broadcast()
 
@@ -325,7 +325,7 @@ func (gpu *GPUDeviceServer) StreamSend(
 	for {
 		// Receive a DataChunk message from the stream
 		req, err := stream.Recv()
-		log.Printf("req is %v", req)
+		log.Printf("stream send req is %v", req)
 		// protobuf default value / stream handling, it's weird
 		if req != nil {
 			if req.SrcRank != nil {
@@ -361,14 +361,14 @@ func (gpu *GPUDeviceServer) StreamSend(
 			_, exists = gpu.streamDst[srcRank].info[streamId]
 		}
 		log.Printf("got recv for stream with streamId: %d, srcRank: %d", streamId, srcRank)
-		addr := gpu.streamDst[srcRank].info[streamId].dstAddr
+		addr := gpu.streamDst[srcRank].info[streamId].DstAddr
+		gpu.streamDst[srcRank].info[streamId].DstAddr += 8
 		op := gpu.streamDst[srcRank].info[streamId].op
 		gpu.streamDst[srcRank].cond.L.Unlock() // technically not thread safe
 
-		log.Printf("data len: %d", len(req.Data))
 		srcData, _ := gpu.memory.Read(addr, uint64(len(req.Data)))
-
 		gpu.memory.Write(addr, reduce(op, srcData, req.Data))
+
 	}
 }
 
@@ -443,15 +443,18 @@ func (gpu *GPUDeviceServer) StreamSendExecute(
 
 	log.Printf("starting streamsendexecute with %d, %x, %x, %d", streamId, srcAddr, numBytes, dstRank)
 	// not streaming in chunks. in cuda, you specify a datatype, which makes this make sense
-	data, _ := gpu.memory.Read(srcAddr, numBytes)
-	dc := pb.DataChunk{
-		Data:     data,
-		StreamId: &pb.StreamId{Value: streamId},
-		SrcRank:  &pb.Rank{Value: gpu.rank},
+
+	var offset uint64
+	for offset = 0; offset < numBytes; offset += 8 {
+		data, _ := gpu.memory.Read(srcAddr+offset, 8)
+		dc := pb.DataChunk{
+			Data:     data,
+			StreamId: &pb.StreamId{Value: streamId},
+			SrcRank:  &pb.Rank{Value: gpu.rank},
+		}
+		log.Printf("offset: %d, len data: %d", offset, len(dc.Data))
+		stream.Send(&dc)
 	}
-	log.Printf("len data: %d", len(dc.Data))
-	log.Printf("data: %v", dc)
-	stream.Send(&dc)
 
 	_, err = stream.CloseAndRecv()
 	if err != nil {

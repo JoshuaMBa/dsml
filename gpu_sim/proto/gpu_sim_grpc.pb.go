@@ -26,6 +26,7 @@ const (
 	GPUDevice_StreamSend_FullMethodName         = "/gpu_sim.GPUDevice/StreamSend"
 	GPUDevice_GetStreamStatus_FullMethodName    = "/gpu_sim.GPUDevice/GetStreamStatus"
 	GPUDevice_Memcpy_FullMethodName             = "/gpu_sim.GPUDevice/Memcpy"
+	GPUDevice_ResetGpu_FullMethodName           = "/gpu_sim.GPUDevice/ResetGpu"
 )
 
 // GPUDeviceClient is the client API for GPUDevice service.
@@ -46,6 +47,7 @@ type GPUDeviceClient interface {
 	// For the coordinator to know if a stream has completed.
 	GetStreamStatus(ctx context.Context, in *GetStreamStatusRequest, opts ...grpc.CallOption) (*GetStreamStatusResponse, error)
 	Memcpy(ctx context.Context, in *MemcpyRequest, opts ...grpc.CallOption) (*MemcpyResponse, error)
+	ResetGpu(ctx context.Context, in *ResetGpuRequest, opts ...grpc.CallOption) (*ResetGpuResponse, error)
 }
 
 type gPUDeviceClient struct {
@@ -129,6 +131,16 @@ func (c *gPUDeviceClient) Memcpy(ctx context.Context, in *MemcpyRequest, opts ..
 	return out, nil
 }
 
+func (c *gPUDeviceClient) ResetGpu(ctx context.Context, in *ResetGpuRequest, opts ...grpc.CallOption) (*ResetGpuResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResetGpuResponse)
+	err := c.cc.Invoke(ctx, GPUDevice_ResetGpu_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GPUDeviceServer is the server API for GPUDevice service.
 // All implementations must embed UnimplementedGPUDeviceServer
 // for forward compatibility.
@@ -147,6 +159,7 @@ type GPUDeviceServer interface {
 	// For the coordinator to know if a stream has completed.
 	GetStreamStatus(context.Context, *GetStreamStatusRequest) (*GetStreamStatusResponse, error)
 	Memcpy(context.Context, *MemcpyRequest) (*MemcpyResponse, error)
+	ResetGpu(context.Context, *ResetGpuRequest) (*ResetGpuResponse, error)
 	mustEmbedUnimplementedGPUDeviceServer()
 }
 
@@ -177,6 +190,9 @@ func (UnimplementedGPUDeviceServer) GetStreamStatus(context.Context, *GetStreamS
 }
 func (UnimplementedGPUDeviceServer) Memcpy(context.Context, *MemcpyRequest) (*MemcpyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Memcpy not implemented")
+}
+func (UnimplementedGPUDeviceServer) ResetGpu(context.Context, *ResetGpuRequest) (*ResetGpuResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResetGpu not implemented")
 }
 func (UnimplementedGPUDeviceServer) mustEmbedUnimplementedGPUDeviceServer() {}
 func (UnimplementedGPUDeviceServer) testEmbeddedByValue()                   {}
@@ -314,6 +330,24 @@ func _GPUDevice_Memcpy_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GPUDevice_ResetGpu_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResetGpuRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GPUDeviceServer).ResetGpu(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GPUDevice_ResetGpu_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GPUDeviceServer).ResetGpu(ctx, req.(*ResetGpuRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // GPUDevice_ServiceDesc is the grpc.ServiceDesc for GPUDevice service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -344,6 +378,10 @@ var GPUDevice_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Memcpy",
 			Handler:    _GPUDevice_Memcpy_Handler,
+		},
+		{
+			MethodName: "ResetGpu",
+			Handler:    _GPUDevice_ResetGpu_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
