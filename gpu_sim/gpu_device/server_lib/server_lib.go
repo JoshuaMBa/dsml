@@ -336,6 +336,7 @@ func (gpu *GPUDeviceServer) StreamSend(
 		op := gpu.streamDst[srcRank].info[streamId].op
 		gpu.streamDst[srcRank].cond.L.Unlock() // technically not thread safe
 
+		log.Printf("data len: %d", len(req.Data))
 		srcData, _ := gpu.memory.Read(addr, uint64(len(req.Data)))
 
 		gpu.memory.Write(addr, reduce(op, srcData, req.Data))
@@ -412,6 +413,8 @@ func (gpu *GPUDeviceServer) StreamSendExecute(
 		StreamId: &pb.StreamId{Value: streamId},
 		SrcRank:  &pb.Rank{Value: gpu.rank},
 	}
+	log.Printf("len data: %d", len(dc.Data))
+	log.Printf("data: %v", dc)
 	stream.Send(&dc)
 
 	_, err = stream.CloseAndRecv()

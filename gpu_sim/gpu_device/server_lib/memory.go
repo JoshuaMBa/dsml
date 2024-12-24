@@ -63,7 +63,9 @@ func (dm *DeviceMemory) Read(addr uint64, length uint64) ([]byte, error) {
 	if addr < dm.minAddr || addr+length > dm.maxAddr {
 		return nil, fmt.Errorf("address out of range")
 	}
-	return dm.Mapped[addr-dm.minAddr : length], nil
+	start := addr - dm.minAddr
+	end := start + length
+	return dm.Mapped[start:end], nil
 }
 
 // Close releases the mapped memory and closes the file
