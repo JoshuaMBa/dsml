@@ -11,7 +11,7 @@ import (
 	"github.com/JoshuaMBa/dsml/failure_injection"
 	fipb "github.com/JoshuaMBa/dsml/failure_injection/proto"
 	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
-	"github.com/JoshuaMBa/dsml/utils/convert"
+	convert "github.com/JoshuaMBa/dsml/utils"
 
 	// "google.golang.org/grpc"
 	"google.golang.org/grpc"
