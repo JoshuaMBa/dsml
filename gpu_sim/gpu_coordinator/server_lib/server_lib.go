@@ -28,7 +28,7 @@ type GPUCoordinatorOptions struct {
 }
 
 type Operation struct {
-	Execute func()
+	Execute func() error
 }
 
 type Communicator struct {
@@ -151,6 +151,7 @@ func (server *GPUCoordinatorServer) CommInit(
 
 		conn, err := makeConnectionClient(address)
 		if err != nil {
+			log.Printf("GPUCoordinator: CommInit: failed to create connection client")
 			server.mu.Lock()
 			server.comms[commId] = Communicator{
 				using:  using,
@@ -158,7 +159,6 @@ func (server *GPUCoordinatorServer) CommInit(
 			}
 			server.commDestroyInternal(commId)
 			server.mu.Unlock()
-			log.Printf("GPUCoordinator: CommInit: failed to create connection client")
 			return &pb.CommInitResponse{
 				Success: false,
 				CommId:  0,
@@ -243,8 +243,14 @@ func (server *GPUCoordinatorServer) GroupStart(
 	req *pb.GroupStartRequest,
 ) (*pb.GroupStartResponse, error) {
 	server.mu.Lock()
-	defer server.mu.Unlock()
 	comm := server.comms[req.CommId]
+	if comm.status == pb.Status_FAILED {
+		server.mu.Unlock()
+		return &pb.GroupStartResponse{
+			Success: true,
+		}, status.Errorf(codes.Unknown, "communicator %v has failed", req.CommId)
+	}
+	defer server.mu.Unlock()
 	comm.grouped = true
 	comm.status = pb.Status_IN_PROGRESS
 	server.comms[req.CommId] = comm
@@ -259,11 +265,31 @@ func (server *GPUCoordinatorServer) GroupEnd(
 ) (*pb.GroupEndResponse, error) {
 	server.mu.Lock()
 	comm := server.comms[req.CommId]
+	if comm.status == pb.Status_FAILED {
+		server.mu.Unlock()
+		return &pb.GroupEndResponse{
+			Success: false,
+		}, status.Errorf(codes.Unknown, "communicator %v has failed", req.CommId)
+	}
+
 	comm.grouped = false
 	server.comms[req.CommId] = comm
 	server.mu.Unlock()
 
-	// Now we need to iterate through comm.group and execute each operation
+	for _, op := range comm.group {
+		err := op.Execute()
+		if err != nil {
+			server.mu.Lock()
+			comm = server.comms[req.CommId]
+			comm.status = pb.Status_FAILED
+			comm.group = nil
+			server.comms[req.CommId] = comm
+			server.mu.Unlock()
+			return &pb.GroupEndResponse{
+				Success: false,
+			}, status.Error(codes.OutOfRange, "GPUCoordinator: GroupEnd: failed to execute operation to completion")
+		}
+	}
 
 	server.mu.Lock()
 	comm = server.comms[req.CommId]
@@ -284,7 +310,7 @@ func (server *GPUCoordinatorServer) waitForStream(
 	for {
 		select {
 		case <-ctx.Done():
-			return status.Errorf(codes.Unknown, "waitForStream: context termination: streamId: %v", streamId)
+			return status.Errorf(codes.Unknown, "GPUCoordinator: waitForStream: context termination: streamId: %v", streamId)
 		default:
 			// Check status of current stream
 			response, err := me.GetStreamStatus(
@@ -322,9 +348,18 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 	// Grouped requests are queued to be executed later
 	server.mu.Lock()
 	comm := server.comms[req.CommId]
+	if comm.status == pb.Status_FAILED {
+		server.mu.Unlock()
+		return &pb.AllReduceRingResponse{
+			Success: true,
+		}, status.Errorf(codes.Unknown, "communicator %v has failed", req.CommId)
+	}
 	if comm.grouped {
 		comm.group = append(comm.group, Operation{
-			Execute: func() { server.AllReduceRing(ctx, req) },
+			Execute: func() error {
+				_, err := server.AllReduceRing(ctx, req)
+				return err
+			},
 		})
 		server.comms[req.CommId] = comm
 		server.mu.Unlock()
@@ -354,7 +389,7 @@ func (server *GPUCoordinatorServer) AllReduceRing(
 		go func(rank uint32) {
 			defer wg.Done()
 
-			log.Printf("GPU of rank %v entered ring\n", rank)
+			log.Printf("GPUCoordinator: AllReduceRing: GPU of rank %v entered ring\n", rank)
 
 			var prev, next uint32
 			var sendBlockIndex, recvBlockIndex uint64
