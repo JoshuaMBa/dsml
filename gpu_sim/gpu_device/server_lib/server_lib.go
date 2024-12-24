@@ -266,13 +266,14 @@ func (gpu *GPUDeviceServer) BeginReceive(
 	defer gpu.streamDst[srcRank].cond.L.Unlock()
 
 	// assign destination info
-	log.Printf("info is: %v", gpu.streamDst[srcRank].info)
 	gpu.streamDst[srcRank].info[streamId] = req.RecvBuffAddr.Value
 
 	// update status
 	gpu.streamStatus[srcRank].Store(streamId, pb.Status_IN_PROGRESS)
 
 	// wake up waiting threads
+	log.Printf("info is: %v", gpu.streamDst[srcRank].info)
+	log.Printf("notifying threads waiting on streamId: %d, srcRank: %d", streamId, srcRank)
 	gpu.streamDst[srcRank].cond.Broadcast()
 
 	return &pb.BeginReceiveResponse{
@@ -317,14 +318,17 @@ func (gpu *GPUDeviceServer) StreamSend(
 		}
 
 		gpu.streamDst[srcRank].cond.L.Lock()
-		for _, exists := gpu.streamDst[srcRank].info[streamId]; !exists; {
-			log.Printf("sleeping!")
+		_, exists := gpu.streamDst[srcRank].info[streamId]
+		for !exists {
+			log.Printf("waiting on recv for stream with streamId: %d, srcRank: %d", streamId, srcRank)
+			log.Printf("info while waiting: %v (exists: %v)", gpu.streamDst[srcRank].info, exists)
 			gpu.streamDst[srcRank].cond.Wait()
+			_, exists = gpu.streamDst[srcRank].info[streamId]
 		}
-		log.Printf("awake!")
+		log.Printf("got recv for stream with streamId: %d, srcRank: %d", streamId, srcRank)
 		addr := gpu.streamDst[srcRank].info[streamId]
+		gpu.streamDst[srcRank].cond.L.Unlock() // technically not thread safe
 		gpu.memory.Write(addr, req.Data)
-		gpu.streamDst[srcRank].cond.L.Unlock()
 	}
 }
 
