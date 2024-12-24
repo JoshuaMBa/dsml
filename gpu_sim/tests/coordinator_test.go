@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"testing"
 
 	pb "github.com/JoshuaMBa/dsml/gpu_sim/proto"
@@ -12,34 +13,23 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func TestAllReduceRingBasic(t *testing.T) {
-	coordinatorAddr := "127.0.0.1:6000"
-
+func AllReduceRingBasic(t *testing.T, coordinatorAddr string, numDevices uint32, op pb.ReduceOp, operation func(float64, float64) float64) {
 	coordinatorConn, err := grpc.Dial(coordinatorAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatalf("Failed to connect to GPUCoordinator: %v", err)
+		t.Fatalf("Failed to connect to GPUCoordinator: %v", err)
 	}
 	defer coordinatorConn.Close()
 	coordinatorClient := pb.NewGPUCoordinatorClient(coordinatorConn)
 
-	numDevices := uint32(3)
-	log.Printf("Requesting a communicator with %d devices...\n", numDevices)
 	ctx := context.Background()
-
 	commInitResponse, err := coordinatorClient.CommInit(ctx, &pb.CommInitRequest{
 		NumDevices: numDevices,
 	})
-	if err != nil {
-		log.Fatalf("CommInit failed: %v", err)
+
+	if err != nil || commInitResponse.Success == false {
+		t.Fatalf("Failed to initialize communicator: %v", err)
 	}
 
-	if commInitResponse.Success {
-		log.Printf("CommInit succeeded. CommId: %d\n", commInitResponse.CommId)
-	} else {
-		log.Fatalf("CommInit failed.")
-	}
-
-	log.Printf("Initializing data on GPUs...\n")
 	expected := make([]float64, numDevices)
 	memAddrs := make(map[uint32]*pb.MemAddr)
 	for i, data := range commInitResponse.Devices {
@@ -49,7 +39,11 @@ func TestAllReduceRingBasic(t *testing.T) {
 
 		var bytes []byte
 		for j := 0; j < int(numDevices); j++ {
-			expected[j] += float64(i + j)
+			if i == 0 {
+				expected[j] = float64(i + j)
+			} else {
+				expected[j] = operation(expected[j], float64(i+j))
+			}
 			bytes = append(bytes, util.Float64ToBytes(float64(i+j))...)
 		}
 		_, err := coordinatorClient.Memcpy(ctx, &pb.MemcpyRequest{
@@ -67,18 +61,17 @@ func TestAllReduceRingBasic(t *testing.T) {
 		}
 	}
 
-	log.Printf("Initiating Ring Reduce...\n")
-	_, err = coordinatorClient.AllReduceRing(
+	allReduceRingResponse, err := coordinatorClient.AllReduceRing(
 		ctx,
 		&pb.AllReduceRingRequest{
 			CommId:   commInitResponse.CommId,
 			Count:    uint64(numDevices),
-			Op:       pb.ReduceOp_SUM,
+			Op:       op,
 			MemAddrs: memAddrs,
 		},
 	)
-	if err != nil {
-		log.Fatalf("AllReduceRing failed")
+	if err != nil || allReduceRingResponse.Success == false {
+		t.Fatalf("AllReduceRing failure detected")
 	}
 
 	wordSize := uint64(8)
@@ -92,19 +85,33 @@ func TestAllReduceRingBasic(t *testing.T) {
 		},
 	})
 	if err != nil {
-		log.Fatalf("Failed to retrieve final data from device of rank 0 with deviceId %v", commInitResponse.Devices[0].DeviceId.Value)
+		t.Fatalf("Failed to retrieve final data from device of rank 0")
 	}
 
-	s := "got:"
+	var got []float64
 	for i := 0; i < int(numDevices); i++ {
 		f := res.GetDeviceToHost().DstData[uint64(i)*wordSize : (uint64(i)*wordSize)+wordSize]
-		s += fmt.Sprintf("%v ", util.BytesToFloat64(f))
+		got = append(got, util.BytesToFloat64(f))
 	}
-	log.Printf(s + "\n")
 
-	s = "expected:"
+	const tolerance = 1e-9
 	for i := 0; i < int(numDevices); i++ {
-		s += fmt.Sprintf("%v ", expected[i])
+		if math.Abs(expected[i]-got[i]) > tolerance {
+			s := "got:"
+			for j := 0; j < int(numDevices); j++ {
+				s += fmt.Sprintf("%v ", got[i])
+			}
+			s += "\nexpected:"
+			for i := 0; i < int(numDevices); i++ {
+				s += fmt.Sprintf("%v ", expected[i])
+			}
+			t.Fatalf(s + "\n")
+		}
 	}
-	log.Printf(s + "\n")
+}
+
+func TestAllReduceRingBasic(t *testing.T) {
+	AllReduceRingBasic(t, "127.0.0.1:6000", 3, pb.ReduceOp_SUM, func(a float64, b float64) float64 {
+		return a + b
+	})
 }
